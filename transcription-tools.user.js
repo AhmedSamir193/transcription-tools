@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transcription Tools - scroll + tags + spacing check + writing rules + tag check + time calc + full review + live review
 // @namespace    annotation-tools
-// @version      16
+// @version      17
 // @match        *://*/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/AhmedSamir193/transcription-tools/main/transcription-tools.user.js

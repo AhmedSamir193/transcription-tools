@@ -4,6 +4,8 @@
 // @version      16
 // @match        *://*/*
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/AhmedSamir193/transcription-tools/main/transcription-tools.user.js
+// @downloadURL  https://raw.githubusercontent.com/AhmedSamir193/transcription-tools/main/transcription-tools.user.js
 // ==/UserScript==
 
 (function() {

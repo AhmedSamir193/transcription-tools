@@ -1,17 +1,15 @@
 // ==UserScript==
-// @name         Transcription Tools - scroll + tags + spacing check + writing rules + tag check + time calc + full review + live review
+// @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      17
+// @version      17.0
 // @match        *://*/*
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/AhmedSamir193/transcription-tools/main/transcription-tools.user.js
-// @downloadURL  https://raw.githubusercontent.com/AhmedSamir193/transcription-tools/main/transcription-tools.user.js
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // Load the "Cairo" font (a clean, modern Arabic font) once so all the tool's UI (panels, tooltips, buttons) uses it
+    // بنحمّل خط "Cairo" (خط عربي عصري وأنيق) مرة واحدة عشان كل واجهات الأداة (لوحات، تولتيبات، أزرار) تستخدمه
     (function loadCairoFont() {
         if (document.getElementById('tx-cairo-font-link')) return;
         const link = document.createElement('link');
@@ -25,7 +23,7 @@
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    // ==================== Helper functions: ignore diacritics/French elision ====================
+    // ==================== دوال مساعدة: تجاهل التشكيل/الإليجن الفرنسي ====================
     const FRENCH_LATIN_RANGE = 'À-ÖØ-öø-ÿ';
     const latinTokenRegex = new RegExp('[A-Za-z' + FRENCH_LATIN_RANGE + ']+(?:\'[A-Za-z' + FRENCH_LATIN_RANGE + ']+)*', 'g');
 
@@ -38,11 +36,11 @@
         return raw.replace(new RegExp('([A-Za-z' + FRENCH_LATIN_RANGE + '])\'([A-Za-z' + FRENCH_LATIN_RANGE + '])', 'g'), '$1$2');
     }
 
-    // ==================== Taming the site watermark (repeated account number) - v20.0 ====================
-    // The site stamps a number (like the account ID) repeated as a watermark across the page, which is useful for security/tracking
-    // so we won't remove it, but its current look (almost the same contrast as normal text) strains the eyes and visually clashes with the content.
-    // Here we auto-detect these watermark elements (long repeated number text scattered oddly across the page) and make them
-    // very faint and clearly background (not normal text), without affecting anything else on the page.
+    // ==================== ترويض العلامة المائية (رقم الحساب المتكرر) - v20.0 ====================
+    // الموقع بيحط رقم (زي الآيدي بتاع الحساب) متكرر كعلامة مائية فوق الصفحة كلها، وده مفيد أمنياً/للتتبع
+    // فمش هنشيله، بس شكله الحالي (نفس تباين النص العادي تقريباً) بيزغلل العين وبيتعارك بصرياً مع الكلام.
+    // هنا بنكتشف عناصر العلامة المائية دي أوتوماتيك (نص أرقام طويل متكرر بشكل غريب في الصفحة) ونخليها
+    // خافتة جداً وواضح إنها خلفية (مش نص عادي)، من غير ما نأثر على أي حاجة تانية في الصفحة.
     function ensureWatermarkStyles() {
         if (document.getElementById('tx-watermark-style')) return;
         const style = document.createElement('style');
@@ -61,8 +59,8 @@
         document.head.appendChild(style);
     }
 
-    // Looks for any text element that's a long repeated number (8+ digits) - that's usually the watermark's shape
-    // (an account ID repeated dozens of times on the page), without touching any normal number inside the table or content.
+    // بيدوّر على أي عنصر نص متكرر بشكل رقم طويل (8 أرقام فأكتر) - ده شكل العلامة المائية عادةً
+    // (آيدي حساب متكرر عشرات المرات في الصفحة)، من غير ما يلمس أي رقم عادي جوه الجدول أو المحتوى.
     const WATERMARK_NUMERIC_PATTERN = /^\d{8,}$/;
     function tameSiteWatermark() {
         if (!document.body) return;
@@ -80,7 +78,7 @@
             if (!nodesByText.has(text)) nodesByText.set(text, []);
             nodesByText.get(text).push(el);
         }
-        // We only treat it as a watermark if the same number repeats a lot on the page (not a normal number that happened to appear once)
+        // نعتبرها علامة مائية بس لو نفس الرقم متكرر كتير في الصفحة (مش رقم عادي ظهر مرة واحدة بالصدفة)
         candidateParents.forEach((count, text) => {
             if (count < 3) return;
             nodesByText.get(text).forEach(el => {
@@ -89,11 +87,11 @@
         });
     }
 
-    // Instead of scanning the whole page every 2 seconds regardless of whether anything changed, we use a MutationObserver
-    // like the rest of the script's features: it catches any page change (new task, scroll, etc.) instantly, and we do simple debouncing
-    // (150ms) so if several changes happen back to back, we run one check instead of a check per change.
-    // We also exclude changes coming from the tool's own UI (like the timer counter ticking every second, or
-    // toasts) since those can never bring in a new watermark, so there's no need to run a full page scan because of them.
+    // بدل ما نمشي على الصفحة كلها كل ثانيتين (بغض النظر لو اتغيّر حاجة أو لأ)، بنستخدم MutationObserver
+    // زي باقي ميزات السكريبت: يلقط أي تغيير في الصفحة (تاسك جديد، سكرول، إلخ) فورًا، وبنعمل Debounce بسيط
+    // (150ms) عشان لو حصل شوية تغييرات ورا بعض، نعمل فحص واحد بس مش فحص لكل تغيير على حدة.
+    // كمان بنستبعد التغييرات اللي مصدرها واجهة الأداة نفسها (زي عداد التايمر اللي بيتحدث كل ثانية، أو
+    // التوستات) لأنها مستحيل تجيب علامة مائية جديدة، فمفيش داعي نعمل فحص كامل للصفحة بسببها.
     let watermarkScanQueued = false;
     function isMutationFromOwnUI(mutation) {
         let node = mutation.target;
@@ -115,7 +113,7 @@
     }
     startWatermarkObserver();
 
-    // ==================== Results UI - dark glassmorphism (v10.0) ====================
+    // ==================== واجهة نتائج - Glassmorphism داكن (v10.0) ====================
     function ensurePanelStyles() {
         if (document.getElementById('tx-panel-style')) return;
         const style = document.createElement('style');
@@ -277,7 +275,7 @@
         return 'info';
     }
 
-    // ==================== Segment highlight - soft glowing outline (v12.0) ====================
+    // ==================== هايلايت السيجمنتات - Soft Glowing Outline (v12.0) ====================
     function ensureRowHighlightStyles() {
         if (document.getElementById('tx-row-highlight-style')) return;
         const style = document.createElement('style');
@@ -333,7 +331,7 @@
         else if (status === 'ok') row.classList.add('tx-row-ok');
     }
 
-    // ==================== Auto-save indicator - Smart Auto-Save Indicator (v12.0) ====================
+    // ==================== نقطة الحفظ التلقائي (Smart Auto-Save Indicator) (v12.0) ====================
     function getOrCreateSaveDot(row) {
         const numberCell = row.querySelector('.number');
         if (!numberCell) return null;
@@ -400,7 +398,7 @@
         return m ? parseInt(m[1], 10) : null;
     }
 
-    // ==================== Glass confirm dialog (replacement for the ugly window.confirm) (v15.0) ====================
+    // ==================== كونفيرم زجاجي (بديل window.confirm البشع) (v15.0) ====================
     function ensureConfirmStyles() {
         if (document.getElementById('tx-confirm-style')) return;
         const style = document.createElement('style');
@@ -437,7 +435,7 @@
         document.head.appendChild(style);
     }
 
-    // Returns a Promise<boolean> - true if confirm was pressed, false if cancel/outside click/Escape
+    // بيرجع Promise<boolean> - true لو دوس تأكيد، false لو دوس إلغاء أو برة الصندوق أو Escape
     function showGlassConfirm(message, options) {
         ensurePanelStyles();
         ensureConfirmStyles();
@@ -520,7 +518,7 @@
         return div;
     }
 
-    // sections: [{ heading: 'heading text' or null, items: ['text' or {text, type}] }]
+    // sections: [{ heading: 'نص العنوان' أو null, items: ['نص' أو {text, type}] }]
     function showResultsPanel(title, sections, emptyMessage, extraAction) {
         ensurePanelStyles();
 
@@ -635,7 +633,7 @@
         document.addEventListener('keydown', escHandler);
     }
 
-    // Goes through the segments whose numbers are in serialSet (across all pages/scroll) and applies fixFn to their text
+    // بيدور على السيجمنتات اللي رقمها في serialSet (عبر كل الصفحات/السكرول) وبيطبّق fixFn على النص بتاعها
     async function fixSegmentsBySerial(serialSet, fixFn) {
         const remaining = new Set(serialSet);
         let fixedCount = 0;
@@ -660,7 +658,7 @@
             });
         }
 
-        // We check what's currently visible first, before any navigation - covers the case where no navigation or scroll is needed (all rows already visible)
+        // نفحص المرئي حالياً الأول قبل أي تنقل - يغطي حالة عدم وجود نافيجيشن ولا سكرول (كل الصفوف ظاهرة أصلاً)
         tryFixVisible();
 
         const navButtons = findNavButtons();
@@ -694,7 +692,7 @@
         return fixedCount;
     }
 
-    // ==================== "Full review" panel — iOS-style segmented tabs (v10.0) ====================
+    // ==================== لوحة "المراجعة الشاملة" — Segmented Tabs بأسلوب iOS (v10.0) ====================
     function ensureReviewStyles() {
         if (document.getElementById('tx-review-style')) return;
         const style = document.createElement('style');
@@ -877,8 +875,8 @@
         document.addEventListener('keydown', escHandler);
     }
 
-    // ==================== Dedup functions (prevent the same segment/error showing twice) (v13.0) ====================
-    // Happens when the same segment gets read more than once across overlapping navigation/scroll pages
+    // ==================== دوال تصفية التكرار (منع ظهور نفس السيجمنت/الخطأ مرتين) (v13.0) ====================
+    // بيحصل لما نفس السيجمنت يتقرا أكتر من مرة عبر صفحات النافيجيشن/السكرول المتداخلة
     function dedupeBySerial(arr) {
         const seen = new Set();
         return arr.filter(item => {
@@ -889,7 +887,7 @@
         });
     }
 
-    // Merges all "writing rules" results for the same segment into one item, and drops duplicate error messages within the same segment
+    // بيدمج كل نتائج "قواعد الكتابة" لنفس السيجمنت في عنصر واحد، وبيشيل تكرار نفس رسالة الخطأ جوه نفس السيجمنت
     function dedupeWritingResults(results) {
         const map = new Map();
         results.forEach(r => {
@@ -899,8 +897,8 @@
         return Array.from(map.keys()).sort((a, b) => a - b).map(serial => ({ serial, issues: Array.from(map.get(serial)) }));
     }
 
-    // Collects segment numbers with issues + each issue's text, from the "full review" tabs result
-    // Used for keyboard navigation (Alt+↓/↑) and for the "what's wrong" tooltip on the floating nav button
+    // بيلم أرقام السيجمنتات اللي فيها مشاكل + نص كل مشكلة، من نتيجة تابات "المراجعة الشاملة"
+    // بيتستخدم في التنقل بالكيبورد (Alt+↓/↑) وفي عرض تلميح "شو المشكلة" في زرار التنقل العائم
     function computeProblemDataFromTabs(tabs) {
         const serialsSet = new Set();
         const messages = new Map();
@@ -915,10 +913,10 @@
                     if (typeof serial === 'number' && !isNaN(serial)) {
                         serialsSet.add(serial);
                         if (!messages.has(serial)) messages.set(serial, []);
-                        // Strip the segment number from the start of the message if present, so the tooltip stays clean.
-                        // If the whole text was just "segment N" with no extra detail, take the description from the group's
-                        // heading (sec.heading), which has the real explanation - so the tooltip doesn't end up empty
-                        // and just repeating the segment number (the issue shown in the screenshot).
+                        // بنشيل رقم السيجمنت من أول الرسالة لو موجود عشان التلميح يبقى نضيف.
+                        // لو النص كله كان "سيجمنت N" بس من غير أي تفاصيل زيادة، بناخد الوصف من عنوان
+                        // المجموعة (sec.heading) اللي فيه شرح المشكلة الحقيقي - عشان التلميح ميبقاش فاضي
+                        // ويكرر رقم السيجمنت بس (المشكلة اللي ظهرت في الصورة).
                         const cleaned = String(itemText).replace(/^سيجمنت\s+\d+\s*[-—:]?\s*/, '').trim();
                         const finalMsg = cleaned || sec.heading || itemText;
                         if (!messages.get(serial).includes(finalMsg)) messages.get(serial).push(finalMsg);
@@ -929,7 +927,7 @@
         return { serials: Array.from(serialsSet).sort((a, b) => a - b), messages };
     }
 
-    // Runs all the checks together and shows them in one tabbed panel
+    // بيشغّل كل الفحوصات مع بعض ويعرضهم في لوحة واحدة بتابات
     async function runFullReview(btn) {
         await pickDialect();
 
@@ -1117,7 +1115,7 @@
         cacheReviewTabs(tabs);
         showReviewPanel(tabs);
 
-        // Standing reminder: any "full review" means you're getting close to submitting, so don't forget to log the task in the stats
+        // تذكير دايم: أي "فحص شامل" معناه إنك بتقرب تسلّم، فلازم متنساش تسجّل التاسك في الإحصائية
         setTimeout(() => showToast('متنساش: لما تخلّص التصليح وتقرب تسلّم، دوس ✅ إنهاء التاسك أو F4 عشان يتسجل في إحصائية اليوم 📊', false, 7000), 600);
     }
 
@@ -1131,14 +1129,73 @@
         fullReviewBtnRef = btn;
     }
 
-    // Helper: finds the site's own pagination buttons (labelled like "1 - 50") so other features
-    // (full review, tag check, timing calc, etc.) can page through every row of a task.
+    // ==================== الجزء 1: نسخ كل السيجمنتات ====================
+    function extractVisibleRows() {
+        const rows = document.querySelectorAll('#changyuliu_table > tr');
+        const map = {};
+
+        rows.forEach(row => {
+            const serialCell = row.querySelector('.number');
+            const contentCell = row.querySelector('.textContent .mark-content-textarea');
+            if (!serialCell) return;
+
+            const serial = parseInt(serialCell.textContent.trim(), 10);
+            if (isNaN(serial)) return;
+
+            let text = contentCell ? (contentCell.value || contentCell.textContent || '') : '';
+            text = text.replace(/\s+/g, ' ').trim();
+
+            if (/^<[A-Za-z]+>$/.test(text)) return;
+
+            if (text) map[serial] = text;
+        });
+
+        return map;
+    }
+
     function findNavButtons() {
         const all = Array.from(document.querySelectorAll('div, span, button, a'));
         return all.filter(el => {
             const txt = el.textContent.trim();
             return /^\d+\s*-\s*\d+$/.test(txt) && el.children.length === 0;
         });
+    }
+
+    async function collectAllSegments() {
+        const navButtons = findNavButtons();
+        let allData = {};
+
+        if (navButtons.length > 0) {
+            for (const btn of navButtons) {
+                btn.click();
+                await sleep(500);
+                Object.assign(allData, extractVisibleRows());
+            }
+        } else {
+            const container = document.querySelector('#changyuliu_table')?.closest('[style*="overflow"]');
+            if (container) {
+                container.scrollTop = 0;
+                await sleep(300);
+                let stableCount = 0;
+                let prevKeyCount = 0;
+
+                while (stableCount < 2) {
+                    Object.assign(allData, extractVisibleRows());
+                    container.scrollTop += container.clientHeight * 0.6;
+                    await sleep(400);
+
+                    const currentKeyCount = Object.keys(allData).length;
+                    if (currentKeyCount === prevKeyCount) stableCount++;
+                    else stableCount = 0;
+                    prevKeyCount = currentKeyCount;
+                }
+            }
+        }
+
+        const sortedKeys = Object.keys(allData).map(Number).sort((a, b) => a - b);
+        const lines = sortedKeys.map(k => allData[k]).filter(t => t.length > 0);
+
+        return { text: lines.join('\n'), count: lines.length, usedNav: navButtons.length > 0 };
     }
 
     function fallbackCopy(text) {
@@ -1155,10 +1212,10 @@
         return success;
     }
 
-    // ==================== Internal multi-clipboard (Smart Clipboard Ring) ====================
-    // Listens for any copy that happens on the page (regular select-and-copy, or copy via the tool's own buttons -
-    // both go through the normal 'copy' event) and stores the last 10 distinct texts. Ctrl+Shift+V while inside any
-    // text field opens a small menu under the cursor, pick with arrow keys + Enter, and it pastes instantly where you're typing.
+    // ==================== حافظة النصوص المتعددة الداخلية (Smart Clipboard Ring) ====================
+    // بيسمع لأي عملية Copy حصلت جوه الصفحة (تحديد ونسخ عادي، أو نسخ عن طريق أزرار الأداة نفسها -
+    // كلاهما بيمرّ من حدث 'copy' الطبيعي) ويخزن آخر 10 نصوص مختلفة. Ctrl+Shift+V وأنت جوه أي
+    // مربع كتابة بيفتح منيو صغير تحت الماوس تختار منه بالسهم + Enter فيتلزق النص فوراً في مكان الكتابة.
     const CLIPBOARD_RING_MAX = 10;
     let clipboardRing = [];
     let lastMouseX = 0, lastMouseY = 0;
@@ -1174,8 +1231,8 @@
     }
 
     document.addEventListener('copy', () => {
-        // We read the text from the actual selection at copy time - tied to activeElement, because text inputs
-        // (textarea/input) don't use the normal Selection API for their internal text.
+        // بنقرأ النص من مكان التحديد الفعلي وقت النسخة - مربوط بالـ activeElement عشان مربوطات
+        // الكتابة (textarea/input) مش بتستخدم Selection API العادية للنص الداخلي بتاعها.
         let text = '';
         const active = document.activeElement;
         if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
@@ -1296,7 +1353,68 @@
         document.body.appendChild(menu);
     }
 
-    // ==================== Part 2: smart horizontal scroll ====================
+    let lastCollectedText = '';
+    let lastCollectedCount = 0;
+
+    async function copySegments(btn) {
+        btn.textContent = '⏳ جاري السحب...';
+        btn.disabled = true;
+
+        const result = await collectAllSegments();
+
+        btn.textContent = '📋 نسخ كل السيجمنتات';
+        btn.disabled = false;
+
+        if (!result || !result.text) {
+            showToast('مفيش سيجمنتات اتلقطت (بعد استبعاد التاجز)', true);
+            return;
+        }
+
+        lastCollectedText = result.text;
+        lastCollectedCount = result.count;
+        const method = result.usedNav ? 'عبر Navigation' : 'عبر سكرول';
+
+        let ok = fallbackCopy(lastCollectedText);
+        if (!ok) {
+            await sleep(120);
+            ok = fallbackCopy(lastCollectedText);
+        }
+
+        if (ok) {
+            showToast('تم نسخ ' + result.count + ' سيجمنت (بدون تاجز) - ' + method);
+        } else {
+            showToast('اتجمعت البيانات بس النسخ التلقائي فشل - دوس "📎 نسخ الأخير"', true);
+        }
+    }
+
+    let copyAllBtnRef = null;
+    function addCopyButton() {
+        const btn = document.createElement('button');
+        btn.textContent = '📋 نسخ كل السيجمنتات';
+        btn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:99999;background:#22c55e;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        btn.onclick = () => copySegments(btn);
+        document.body.appendChild(btn);
+        copyAllBtnRef = btn;
+    }
+
+    function copyLastCollected() {
+        if (!lastCollectedText) {
+            showToast('مفيش بيانات مجمّعة بعد — دوس "نسخ كل السيجمنتات" الأول', true);
+            return;
+        }
+        const ok = fallbackCopy(lastCollectedText);
+        showToast(ok ? 'تم نسخ ' + lastCollectedCount + ' سيجمنت ✅' : 'فشل النسخ برضه — جرب تاني بسرعة', !ok);
+    }
+
+    function addCopyLastButton() {
+        const btn = document.createElement('button');
+        btn.textContent = '📎 نسخ الأخير';
+        btn.style.cssText = 'position:fixed;bottom:20px;right:340px;z-index:99999;background:#f59e0b;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        btn.onclick = copyLastCollected;
+        document.body.appendChild(btn);
+    }
+
+    // ==================== الجزء 2: سكرول أفقي ذكي ====================
     function findScrollableTarget(waveformContainer) {
         const candidates = waveformContainer.querySelectorAll('*');
         for (const el of candidates) {
@@ -1339,12 +1457,12 @@
         return true;
     }
 
-    // Note: the site is an SPA (Vue) - navigating from task to task without a full page refresh swaps
-    // elements like #waveform / #changyuliu_table for new DOM elements. If we stopped the periodic check after the first success,
-    // we wouldn't be able to reattach to the new element. So we leave it running the whole time (very cheap when nothing changed).
+    // ملحوظة: الموقع SPA (Vue) - لما تتنقل من تاسك لتاسك من غير Refresh كامل للصفحة، بيستبدل عناصر
+    // زي #waveform / #changyuliu_table بعناصر DOM جديدة. لو وقفنا الفحص الدوري بعد أول مرة ينجح،
+    // مش هنعرف نربط تاني على العنصر الجديد. فبنسيبه شغال طول الوقت (تكلفته بسيطة جداً لما مفيش تغيير).
     setInterval(() => { setupWaveformScroll(); }, 800);
 
-    // ==================== Part 4: extra spaces + double space check ====================
+    // ==================== الجزء 4: فحص المسافات الزائدة + المسافة المزدوجة ====================
     function checkWhitespaceIssues() {
         const rows = document.querySelectorAll('#changyuliu_table > tr');
         const leadTrailIssues = [];
@@ -1433,7 +1551,7 @@
         document.body.appendChild(btn);
     }
 
-    // ==================== Part 4.5: extra English + Arabic diacritics check ====================
+    // ==================== الجزء 4.5: فحص الإنجليزي الزايد + التشكيل العربي ====================
     function checkEnglishAndTashkeel() {
         const rows = document.querySelectorAll('#changyuliu_table > tr');
         const englishIssues = [];
@@ -1526,30 +1644,30 @@
         document.body.appendChild(btn);
     }
 
-    // ==================== Part 4.6: grammar check (writing rules + common spelling) ====================
-    // Currently selected dialect (chosen from the "pick dialect" modal before any check) - default is Egyptian
+    // ==================== الجزء 4.6: فحص القواعد (قواعد الكتابة + الإملاء الشائع) ====================
+    // اللهجة الحالية المختارة (بيتم اختيارها من مودال "اختار اللهجة" قبل أي فحص) - الافتراضي مصري
     let currentDialect = 'مصري'; // مصري | لبناني | تونسي
 
     const allowedArabicEnglish = ['اوكي', 'أوكي', 'جيم', 'انستجرام', 'إنستجرام', 'يوتيوب', 'فيسبوك', 'تويتر', 'كمبيوتر', 'تاكسي', 'سوفنير', 'جيجا', 'كاريزما', 'اوتوبيس', 'تليفون'];
     const blacklistArabicEnglish = { 'هوسبيتال': 'hospital', 'سكول': 'school', 'مول': 'mall', 'بوليش': 'polish', 'واتساب': 'whatsapp', 'ماركت': 'market' };
 
-    // English words written in Latin letters that should actually be written in Arabic (the opposite of the list above) - per the common-mistakes list
+    // كلمات إنجليزي مكتوبة بحروف لاتينية بس المفروض تتكتب عربي (عكس القايمة اللي فوق) - زي ما جه في قايمة الأخطاء الشائعة
     const ENGLISH_TO_ARABIC_MAP = {
         'youtube': 'يوتيوب', 'instagram': 'انستجرام', 'facebook': 'فيسبوك', 'game': 'جيم',
         'computer': 'كمبيوتر', 'charisma': 'كاريزما', 'taxi': 'تاكسي', 'souvenir': 'سوفنير',
         'giga': 'جيجا', 'okay': 'أوكي'
     };
 
-    // "Casing" fix for known English words (must stay English, just in the right form) - case-sensitive exact match
+    // تصحيح "كيسينج" لكلمات إنجليزي معروفة (لازم تفضل إنجليزي بس بشكلها الصح) - مطابقة حرفية بالحالة (Case-sensitive)
     const ENGLISH_CASING_FIX_MAP = {
         'Hospital': 'hospital', 'School': 'school', 'Mall': 'mall',
         'iphone': 'iPhone', 'playstation': 'PlayStation', 'ipad': 'iPad',
         'pc': 'PC', 'mtv': 'MTV', 'vr': 'VR', 'bts': 'BTS', 'usa': 'USA'
     };
 
-    // General spelling maps (hamzas + taa marbuta/haa + alef maksura + common joined/split words)
-    // These apply to all dialects - except words with a dialect-specific exception (like "shay'" and "mithl" in Lebanese), which get excluded automatically below
-    // ⚠️ Note: "ali ⬅️ ala" can get confused with a person's name ("Ali"), so double-check any fix on it by eye
+    // خرائط الإملاء العامة (همزات + تاء مربوطة/هاء + ألف مقصورة + كلمات شائعة ملتصقة/مفصولة)
+    // دي بتتطبق على كل اللهجات - إلا الكلمات اللي ليها استثناء خاص باللهجة (زي "شيء" و"مثل" باللبناني) وبيتم استثناؤها تلقائي أدناه
+    // ⚠️ ملحوظة: "علي ⬅️ على" ممكن يتلخبط مع اسم علم (اسم شخص "علي")، فراجع أي تصليح عليها بعينك
     const HAMZA_SPELLING_MAP = {
         'الى': 'إلى', 'الا': 'إلا', 'ان': 'إن', 'ابراهيم': 'إبراهيم', 'احمد': 'أحمد', 'افضل': 'أفضل',
         'اكل': 'أكل', 'اسلام': 'إسلام', 'اخر': 'آخر', 'امن': 'آمن', 'اسيا': 'آسيا',
@@ -1594,15 +1712,15 @@
         'جرحي': 'جرحى', 'قتلي': 'قتلى', 'اسري': 'أسرى', 'دعوي': 'دعوى', 'اقصي': 'أقصى',
         'ادني': 'أدنى', 'اعلي': 'أعلى'
     };
-    // Common joined/split words or missing alef (not dialect-specific)
+    // كلمات شائعة ملتصقة/مفصولة أو ناقصة ألف (مش خاصة بلهجة بعينها)
     const MISC_WORD_MAP = {
         'اطلعو': 'اطلعوا', 'راحو': 'راحوا', 'جائو': 'جاءوا',
         'انكو': 'أنكم', 'معكو': 'معكم', 'عندكو': 'عندكم'
     };
-    // Full general spelling map (checked as a whole token, with word boundaries)
+    // خريطة الإملاء العامة الكاملة (بتتفحص كتوكن كامل بحدود كلمة)
     const missingHamzaMap = Object.assign({}, HAMZA_SPELLING_MAP, TAA_MARBUTA_ALEF_MAP, MISC_WORD_MAP);
 
-    // Common multi-word phrases - matched by searching the text directly, not by single-token boundaries
+    // جمل/عبارات شائعة (فيها أكتر من كلمة) - بتتصحح بالبحث عن النص مباشرة مش بحدود توكن واحد
     const PHRASE_FIXES = [
         [/ان\s*شاء\s*الله/g, 'إن شاء الله'],
         [/انشاء\s*الله/g, 'إن شاء الله'],
@@ -1619,15 +1737,15 @@
         [/توا\s+كا/g, 'تواكا']
     ];
 
-    // Abbreviations with a fixed correction (not a general rule, each one is a special case) - like P.O. Box style abbreviations
+    // أبانيع مختصرة ليها تصحيح ثابت (مش قاعدة عامة، كل واحدة ليها حالتها) - زي ص.ب / ش.م.خ ...
     const ABBR_EXACT_MAP = {
         'ص.ب': 'ص.ب.', 'ش.م.خ.': 'ش.م.خ', 'ش.م.ع': 'ش.م.ع.', 'م.خ.م': 'م.خ.م.', 'ش.خ.م': 'ش.خ.م.'
     };
 
-    // Titles like Mr./Dr./Eng. must be separated from the name by a space after the period (Mr.Ali ⬅️ Mr. Ali)
+    // ألقاب زي أ. / د. / م. لازم تتفصل عن الاسم بمسافة بعد النقطة (أ.علي ⬅️ أ. علي)
     const TITLE_ABBR_SPACING_REGEX = /(^|\s)(أ\.د|د\.م|أ|د|م)\.([\u0621-\u064A])/g;
 
-    // French words common in the Tunisian dialect (if written in Arabic script, convert to French) - only active when the selected dialect is "Tunisian"
+    // كلمات فرنسي دارجة في اللهجة التونسي (لو مكتوبة عربي، تتحول فرنسي) - بتتفعّل بس لو اللهجة المختارة "تونسي"
     const TUNISIAN_FRENCH_MAP = {
         'ديجا': 'Déjà', 'دونك': 'Donc', 'نورمالمون': 'Normalement', 'باردون': 'Pardon', 'توجور': 'Toujours',
         'بارسكو': 'Parce que', 'كوم سا': 'Comme ça', 'اكزكتمون': 'Exactement', 'كون ميم': 'Quand même',
@@ -1644,30 +1762,30 @@
         'دكور': "D'accord", 'بونجور': 'Bonjour', 'بونسوار': 'Bonsoir'
     };
 
-    // Extra Tunisian French words (everyday expressions + tech/work + places/transport/home) - only active when dialect is "Tunisian"
+    // كلمات فرنسي/تونسي إضافية (تعبيرات يومية + تكنولوجيا/عمل + أماكن/مواصلات/منزل) - بتتفعّل بس لو اللهجة "تونسي"
     const TUNISIAN_FRENCH_MAP_EXTRA = {
-        // descriptive/everyday expressions
+        // تعبيرات وصفية ويومية
         'نورمال': 'Normal', 'بيزار': 'Bizarre', 'قراف': 'Grave', 'سيريي': 'Sérieux',
         'جينيال': 'Génial', 'كاتستروف': 'Catastrophe', 'ديتاي': 'Détail', 'كاليتي': 'Qualité',
         'غارونتي': 'Garantie', 'اورجونس': 'Urgence', 'افوند': 'À fond', 'سيربلاص': 'Sur place',
         'بارازار': 'Par hasard', 'اونغرو': 'En gros', 'اونبان': 'En panne', 'بيل': 'Pile',
-        // tech and work
+        // التكنولوجيا والعمل
         'كونكسيون': 'Connexion', 'ميساج': 'Message', 'شارجور': 'Chargeur', 'كابل': 'Câble',
         'ايكرون': 'Écran', 'دوسيه': 'Dossier', 'سيفي': 'CV', 'كونجي': 'Congé',
         'ستوك': 'Stock', 'ستاج': 'Stage', 'فورماسيون': 'Formation', 'كليون': 'Client',
         'ريزو': 'Réseau', 'كود': 'Code', 'باص': 'Mot de passe / Pass', 'بريم': 'Prime',
-        // places, transport and home
+        // الأماكن، المواصلات والمنزل
         'بوسطة': 'Poste', 'مترو': 'Métro', 'طاكسي': 'Taxi', 'كار': 'Car / Autocar',
         'ستاسيون': 'Station', 'صالة': 'Salon / Salle', 'كولوار': 'Couloir', 'بلكون': 'Balcon',
         'دوش': 'Douche', 'بانو': 'Baignoire / Panneau', 'ريدو': 'Rideau', 'موبل': 'Meuble',
         'باكو': 'Paquet', 'ساشيه': 'Sachet', 'فكتور': 'Facture', 'تيكي': 'Ticket',
         'شيفور': 'Chauffeur', 'ميكانسيان': 'Mécanicien', 'بواتا': 'Boîte', 'ديبو': 'Dépôt'
     };
-    // Merge the base map with the extra one into a single final map, actually used in checking/fixing
+    // دمج الخريطة الأساسية مع الإضافية في خريطة واحدة نهائية بنستخدمها فعلياً في الفحص/التصحيح
     Object.assign(TUNISIAN_FRENCH_MAP, TUNISIAN_FRENCH_MAP_EXTRA);
 
-    // Spelling fixes specific to the Tunisian dialect (splitting wrongly-joined question words, merged negation, prepositions, common words)
-    // Kept in a separate map (not TUNISIAN_FRENCH_MAP) since this is Arabic-to-Arabic correction, not a conversion to French
+    // تصحيحات إملائية خاصة باللهجة التونسية (فصل أدوات استفهام ملتصقة غلط، نفي مدمج، حروف جر، كلمات شائعة)
+    // بنفصلها في خريطة لوحدها (مش TUNISIAN_FRENCH_MAP) لأنها تصحيح عربي↔عربي مش تحويل لفرنسي
     const TUNISIAN_SPELLING_CORRECTIONS = {
         'دي ما': 'ديما', 'اش كون': 'شكون', 'إش كون': 'شكون', 'عليش': 'علاش', 'على اش': 'علاش',
         'كيف اش': 'كيفاش', 'وقت اش': 'وقتاش', 'قد اش': 'قداش', 'وينو': 'وينه', 'اش بيك': 'شبيك',
@@ -1678,13 +1796,13 @@
         'تاوا': 'توا', 'توة': 'توا', 'يعيشيك': 'يعيشك', 'ياعيشك': 'يعيشك', 'كا هو': 'كهو',
         'كاهو': 'كهو', 'هاكاكه': 'هكاكة', 'هكدا': 'هكا', 'ايجه': 'ايجا', 'يجي': 'ايجا'
     };
-    // Sorted longest (by word count) to shortest, so if two overlapping phrases exist, the longer/more precise one matches first
+    // بنرتبهم من الأطول (بعدد الكلمات) للأقصر، عشان لو فيه تعبيرين متداخلين نتأكد إن الأطول (الأدق) يتلقط الأول
     const TUNISIAN_SPELLING_KEYS_SORTED = Object.keys(TUNISIAN_SPELLING_CORRECTIONS)
         .sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length || b.length - a.length);
 
-    // Words specific to the Lebanese/Levantine dialect - take priority over the general map (shay' ⬅️ shi, mithl ⬅️ mitl)
+    // كلمات خاصة باللهجة اللبنانية/الشامية - بتاخد الأولوية على الخريطة العامة (شيء ⬅️ شي، مثل ⬅️ متل)
     const LEBANESE_WORD_OVERRIDES = { 'شيء': 'شي', 'مثل': 'متل' };
-    // The plural suffix "-hom" in Lebanese is written "-hen" (ma'ahom ⬅️ ma'ahen, kolhom ⬅️ kolhen) - applied to any word ending in "hom" preceded by at least one Arabic letter
+    // لاحقة الجمع "ـهم" باللبناني بتتكتب "ـهن" (معهم ⬅️ معهن، كلهم ⬅️ كلهن) - بنطبقها على أي كلمة منتهية بـ"هم" مسبوقة بحرف عربي واحد ع الأقل
     const LEBANESE_PLURAL_SUFFIX_REGEX = /([\u0621-\u064A])هم(?=\s|$)/g;
 
     function isFillerWordToken(token) {
@@ -1695,15 +1813,15 @@
         return str.trim().replace(/\s+/g, ' ');
     }
 
-    // Single filler words (one token) - caught whether inside a hashtag or not.
-    // Instead of a fixed list (which was missing letters like "kaah" and others), we now use a general regex:
-    // any single Arabic letter attached before "aah" (be-aah, te-aah, we-aah, fe-aah, ne-aah, ye-aah, ke-aah, ...), or "aah/ah" alone,
-    // or "ah"/"aah" (one or more alefs + haa) - all treated exactly as filler, as requested.
+    // فيلر وردز مفردة (توكن واحد) - بيتلقطوا سواء جوه هاشتاج أو بدون.
+    // بدل قايمة ثابتة (كانت ناقصة حروف زي "كآه" وأي حرف تاني) بقينا بنستخدم Regex عام:
+    // أي حرف عربي واحد لازق قبل "آه" (بآه، تآه، وآه، فآه، نآه، يآه، كآه، ...)، أو "آه/أه" لوحدها،
+    // أو "اه"/"ااه" (ألف واحد أو أكتر + هاء) - كل ده يتعامل معاه كفيلر بالظبط زي المطلوب.
     const FILLER_WORD_REGEX = /^(?:[\u0621-\u064A]?آه|أه|ا+ه)$/;
-    // Filler phrases made of more than one word - caught as a single unit (added per your request: "al aah")
+    // فيلر فريزات مكوّنة من أكتر من كلمة - بتتلقط كوحدة واحدة كاملة (مضاف بناءً على طلبك: "ال آه")
     const FILLER_PHRASES = ['ال آه'];
 
-    // Confirms that hashtag content (or any text) is filler words/phrases only, with no real content inside
+    // بيتأكد إن محتوى هاشتاج (أو أي نص) عبارة عن فيلر وردز/فريز بس، مفيش كلام حقيقي جواه
     function isAllFillerContent(content) {
         const trimmed = normalizeSpaces(content);
         if (!trimmed) return false;
@@ -1712,7 +1830,7 @@
         return tokens.length > 0 && tokens.every(t => isFillerWordToken(t));
     }
 
-    // Ready-made alternation used in the regex to catch single filler words or filler phrases together
+    // Alternation جاهزة تستخدم في الـ Regex لالتقاط الفيلر وردز المفردة أو الفريزات سوا
     function fillerAlternationSource() {
         const phraseParts = FILLER_PHRASES.map(p => p.replace(/\s+/g, '\\s+'));
         const wordPart = '[\\u0621-\\u064A]?آه|أه|ا+ه';
@@ -1769,13 +1887,13 @@
         return issues;
     }
 
-    // Returns all words excluded from the general map because of a dialect-specific exception (so we don't double-correct/conflict)
+    // بيرجّع كل الكلمات المستثناة من الخريطة العامة بسبب استثناء خاص باللهجة الحالية (عشان منعملش تصحيح مزدوج/متعارض)
     function dialectExcludedGeneralWords() {
         if (currentDialect === 'لبناني') return Object.keys(LEBANESE_WORD_OVERRIDES);
         return [];
     }
 
-    // Returns any text issues specific to the selected dialect (not covered by the general map)
+    // بيرجّع أي مشاكل نصية خاصة باللهجة المختارة (غير مشمولة في الخريطة العامة)
     function findDialectIssues(raw) {
         const issues = [];
         if (currentDialect === 'لبناني') {
@@ -1815,8 +1933,8 @@
         return fixed;
     }
 
-    // Converts an exact multiple of 1000/1000000/1000000000 into its correct Arabic dual/plural/singular wording
-    // (like "10 thousand", "100 thousand", "10 million") - returns null if the number isn't an exact multiple (so we don't mess with normal numbers like phone numbers)
+    // بيحوّل عدد صحيح (مضاعف مظبوط لـ1000/1000000/1000000000) لصيغته العربية بالمثنى/الجمع/المفرد الصح
+    // (زي "10 آلاف"، "100 ألف"، "10 ملايين") - بيرجع null لو العدد مش مضاعف مظبوط (عشان منلخبطش أرقام عادية زي أرقام تليفون)
     function formatArabicRoundNumber(n) {
         function unit(count, singular, dual, plural) {
             if (count === 2) return dual;
@@ -1842,7 +1960,7 @@
         if (/\u064B/.test(raw)) issues.push('🚫 تنوين فتح (ً) في النص — المفروض يتشال (زي "جداً" ⬅️ "جدا")');
         if (/[٠-٩]/.test(raw)) issues.push('🔢 أرقام هندية بدل الغربية');
 
-        // Percent sign: correct form is for % (regular) to come right after the number with no space (like 90%)
+        // النسبة المئوية: الصح إن % (العادية) تيجي بعد الرقم ملزوقة، من غير مسافة (زي 90%)
         const percentTokens = raw.match(/[%％]\s*\d+|\d+\s*[%％]/g) || [];
         percentTokens.forEach(tok => {
             if (!/^\d+%$/.test(tok)) issues.push('٪ صيغة % غلط: "' + tok + '" — الصح إن العلامة % (العادية) تيجي بعد الرقم ملزوقة، زي 90%');
@@ -1867,7 +1985,7 @@
         if (/\$/.test(raw)) issues.push('💲 علامة $ — المفروض تتكتب "دولار"');
         if (/\d+\/\d+=\d+/.test(raw)) issues.push('➗ علامة القسمة (/) في معادلة لازم تتكتب ÷');
 
-        // Large round numbers (thousands/millions/billions) - should be written out in Arabic wording, not as a raw long digit string
+        // أرقام مدوّرة كبيرة (آلاف/ملايين/مليارات) - المفروض تتكتب بالصيغة العربية مش رقم خام طويل
         const bigNumTokens = raw.match(/\b\d{4,}\b/g) || [];
         bigNumTokens.forEach(tok => {
             const n = parseInt(tok, 10);
@@ -1907,12 +2025,6 @@
 
         findFillerHashtagIssues(raw).forEach(i => issues.push('#️⃣ ' + i));
 
-        // Laughter written as repeated "ه" (e.g. "ههه") must always be exactly three - not two, not four or more
-        const laughRuns = raw.match(/ه{2,}/g) || [];
-        laughRuns.forEach(run => {
-            if (run.length !== 3) issues.push('😂 "' + run + '" باترن الضحك غلط — لازم يتكتب "ههه" بالظبط (تلات حروف "ه" مش أكتر ولا أقل)');
-        });
-
         return issues;
     }
 
@@ -1938,7 +2050,7 @@
         fixed = fixed.replace(/[.]\s*$/, '');
         fixed = fixed.replace(/\u064B/g, '');
 
-        // Percent sign: normalize any form (% or ％, before or after the number, with or without a space) to the standard %-right-after-number form
+        // النسبة المئوية: نطبّع أي شكل (% أو ％، قبل أو بعد الرقم، بمسافة أو من غيرها) لصيغة عادية %ملزوقة بعد الرقم
         fixed = fixed.replace(/[%％]\s*(\d+)/g, '$1%');
         fixed = fixed.replace(/(\d+)\s*[%％]/g, '$1%');
 
@@ -1962,7 +2074,7 @@
         fixed = fixed.replace(/\$/g, 'دولار');
         fixed = fixed.replace(/(\d+)\/(\d+)(=\d+)/g, '$1÷$2$3');
 
-        // Large round numbers into their Arabic wording
+        // أرقام مدوّرة كبيرة لصيغتها العربية
         fixed = fixed.replace(/\b\d{4,}\b/g, (tok) => {
             const n = parseInt(tok, 10);
             const formatted = formatArabicRoundNumber(n);
@@ -2054,7 +2166,7 @@
         return results;
     }
 
-    // Dialect-pick modal - shown before "grammar check" and "full review" so the check applies the right dialect's rules
+    // مودال اختيار اللهجة - بيظهر قبل "فحص القواعد" و"مراجعة شاملة" عشان الفحص يطبّق قواعد اللهجة الصح
     function ensureDialectPickerStyles() {
         if (document.getElementById('tx-dialect-style')) return;
         const style = document.createElement('style');
@@ -2072,7 +2184,7 @@
         document.head.appendChild(style);
     }
 
-    // Returns a Promise that resolves with the dialect you picked (and saves it in currentDialect until you change it again)
+    // بيرجع Promise بتتحل باللهجة اللي اخترتها (وبتتحفظ في currentDialect لحد ما تغيّرها تاني)
     function pickDialect() {
         ensurePanelStyles();
         ensureConfirmStyles();
@@ -2165,8 +2277,7 @@
         document.body.appendChild(btn);
     }
 
-    // Sets a textarea's value the "native" way (via the prototype setter) so the site's own
-    // framework picks up the change - used by the auto-fix feature above.
+    // ==================== الجزء 6: اللصق الذكي بالترتيب ====================
     function setNativeTextareaValue(el, value) {
         const proto = window.HTMLTextAreaElement.prototype;
         const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
@@ -2175,7 +2286,334 @@
         el.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    // ==================== Part 7: tag consistency check ====================
+    function pasteIntoVisibleRows(lines, lineIndex, pastedSerials) {
+        const rows = document.querySelectorAll('#changyuliu_table > tr');
+        const sortedRows = Array.from(rows).sort((a, b) => {
+            const aNum = parseInt(a.querySelector('.number')?.textContent.trim(), 10) || 0;
+            const bNum = parseInt(b.querySelector('.number')?.textContent.trim(), 10) || 0;
+            return aNum - bNum;
+        });
+
+        sortedRows.forEach(row => {
+            const serialCell = row.querySelector('.number');
+            const textarea = row.querySelector('.textContent .mark-content-textarea');
+            if (!serialCell || !textarea) return;
+
+            const serial = parseInt(serialCell.textContent.trim(), 10);
+            if (isNaN(serial) || pastedSerials.has(serial)) return;
+
+            const currentVal = (textarea.value || textarea.textContent || '').trim();
+
+            if (/^<[A-Za-z]+>$/.test(currentVal)) {
+                pastedSerials.add(serial);
+                return;
+            }
+
+            if (lineIndex.value < lines.length) {
+                setNativeTextareaValue(textarea, lines[lineIndex.value]);
+                lineIndex.value++;
+                pastedSerials.add(serial);
+            }
+        });
+    }
+
+    async function pasteSegments(rawText) {
+        const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+        if (lines.length === 0) {
+            showToast('النص فاضي — تأكد إنك لصقت الجمل صح', true);
+            return;
+        }
+
+        const lineIndex = { value: 0 };
+        const pastedSerials = new Set();
+        const navButtons = findNavButtons();
+
+        if (navButtons.length > 0) {
+            for (const btn of navButtons) {
+                btn.click();
+                await sleep(500);
+                pasteIntoVisibleRows(lines, lineIndex, pastedSerials);
+            }
+        } else {
+            const container = document.querySelector('#changyuliu_table')?.closest('[style*="overflow"]');
+            if (container) {
+                container.scrollTop = 0;
+                await sleep(300);
+                let stableCount = 0;
+                let prevCount = 0;
+
+                while (stableCount < 2) {
+                    pasteIntoVisibleRows(lines, lineIndex, pastedSerials);
+                    container.scrollTop += container.clientHeight * 0.6;
+                    await sleep(400);
+
+                    if (pastedSerials.size === prevCount) stableCount++;
+                    else stableCount = 0;
+                    prevCount = pastedSerials.size;
+                }
+            } else {
+                // مفيش نافيجيشن ولا سكرول - كل الصفوف ظاهرة أصلاً
+                pasteIntoVisibleRows(lines, lineIndex, pastedSerials);
+            }
+        }
+
+        const usedLines = lineIndex.value;
+
+        if (usedLines === lines.length) {
+            showToast('تم لصق كل الأسطر بنجاح ✅ (' + usedLines + ' سطر) - لو غلطت، دوس Ctrl+Z ترجع كل السيجمنتات القديمة دفعة واحدة');
+        } else if (usedLines < lines.length) {
+            showToast('⚠️ عدد الأسطر (' + lines.length + ') أكتر من الأماكن المتاحة (' + usedLines + ')', true);
+        } else {
+            showToast('⚠️ اتلصق ' + usedLines + ' سطر بس من أصل ' + lines.length, true);
+        }
+    }
+
+    function showPasteModal() {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:100000;display:flex;align-items:center;justify-content:center;';
+
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#1e1e1e;padding:20px;border-radius:14px;width:600px;max-width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+
+        const label = document.createElement('div');
+        label.textContent = 'الصق هنا النص المصحح من جيمناي:';
+        label.style.cssText = 'color:#fff;margin-bottom:10px;font-family:Tahoma,sans-serif;font-size:14px;';
+
+        const textarea = document.createElement('textarea');
+        textarea.style.cssText = 'width:100%;height:320px;padding:10px;border-radius:8px;border:none;font-family:Tahoma,sans-serif;font-size:14px;direction:rtl;resize:vertical;box-sizing:border-box;';
+
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'margin-top:14px;display:flex;justify-content:flex-end;gap:10px;';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'إلغاء';
+        cancelBtn.style.cssText = 'padding:8px 18px;border-radius:8px;border:none;background:#555;color:#fff;cursor:pointer;';
+        cancelBtn.onclick = () => document.body.removeChild(overlay);
+
+        const confirmBtn = document.createElement('button');
+        confirmBtn.textContent = '🔍 مقارنة قبل اللصق';
+        confirmBtn.style.cssText = 'padding:8px 18px;border-radius:8px;border:none;background:#22c55e;color:#fff;cursor:pointer;font-weight:bold;';
+        confirmBtn.onclick = async () => {
+            const text = textarea.value;
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            if (lines.length === 0) {
+                showToast('النص فاضي — تأكد إنك لصقت الجمل صح', true);
+                return;
+            }
+            confirmBtn.textContent = '⏳ جاري تجهيز المقارنة...';
+            confirmBtn.disabled = true;
+            // قبل أي لصق فعلي، بنجمع الأماكن المتاحة (كل الصفحات) ونوريه شاشة مقارنة قبل/بعد
+            const slots = await buildPasteSlots();
+            document.body.removeChild(overlay);
+            showPasteDiffPanel(lines, slots, async () => {
+                // اللصق كله بيتسجل كخطوة تراجع واحدة (Ctrl+Z هيرجع كل السيجمنتات القديمة دفعة واحدة)
+                await runBatchOperation('paste', () => pasteSegments(text));
+            });
+        };
+
+        btnRow.appendChild(cancelBtn);
+        btnRow.appendChild(confirmBtn);
+        box.appendChild(label);
+        box.appendChild(textarea);
+        box.appendChild(btnRow);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        textarea.focus();
+    }
+
+    // ==================== شاشة مقارنة قبل اللصق (Diff Preview) ====================
+    // بتوري النص القديم (أحمر) والجديد (أخضر) لكل سيجمنت هيتغيّر، وبتتأكد إن عدد الأسطر الملصوقة
+    // مطابق لعدد الأماكن المتاحة (السيجمنتات اللي مش تاج) - لو مش مطابق، بتمنع اللصق وتقول
+    // بالتحديد عند أنهي سيجمنت الاختلاف بدأ عشان تروحله على طول.
+    function diffWords(oldStr, newStr) {
+        const a = (oldStr || '').split(/(\s+)/);
+        const b = (newStr || '').split(/(\s+)/);
+        const n = a.length, m = b.length;
+        const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+        for (let i = n - 1; i >= 0; i--) {
+            for (let j = m - 1; j >= 0; j--) {
+                dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+            }
+        }
+        let i = 0, j = 0;
+        const outOld = [], outNew = [];
+        while (i < n && j < m) {
+            if (a[i] === b[j]) { outOld.push({ t: a[i], eq: true }); outNew.push({ t: b[j], eq: true }); i++; j++; }
+            else if (dp[i + 1][j] >= dp[i][j + 1]) { outOld.push({ t: a[i], eq: false }); i++; }
+            else { outNew.push({ t: b[j], eq: false }); j++; }
+        }
+        while (i < n) { outOld.push({ t: a[i], eq: false }); i++; }
+        while (j < m) { outNew.push({ t: b[j], eq: false }); j++; }
+        return { outOld, outNew };
+    }
+
+    function renderDiffTokens(tokens, kind) {
+        const wrap = document.createElement('span');
+        tokens.forEach(tok => {
+            if (tok.t === '') return;
+            const s = document.createElement('span');
+            s.textContent = tok.t;
+            if (!tok.eq) s.className = kind === 'old' ? 'tx-diff-removed' : 'tx-diff-added';
+            wrap.appendChild(s);
+        });
+        return wrap;
+    }
+
+    // الأماكن المتاحة للصق = كل السيجمنتات اللي شكلها مش تاج (زي pasteIntoVisibleRows بالظبط)،
+    // بترتيب السيريال، مع نصها الحالي (القديم) عشان نقارنه بالنص الجديد.
+    async function buildPasteSlots() {
+        const allInfo = await collectAllRowInfo();
+        const sortedSerials = Object.keys(allInfo).map(Number).sort((a, b) => a - b);
+        const slots = [];
+        sortedSerials.forEach(s => {
+            const info = allInfo[s];
+            const isTagShaped = /^<[A-Za-z]+>$/.test(info.text);
+            if (isTagShaped) return;
+            slots.push({ serial: s, oldText: info.text });
+        });
+        return slots;
+    }
+
+    function ensurePasteDiffStyles() {
+        if (document.getElementById('tx-diff-style')) return;
+        const style = document.createElement('style');
+        style.id = 'tx-diff-style';
+        style.textContent = `
+            .tx-diff-removed { color: #fca5a5; text-decoration: line-through; background: rgba(239,68,68,0.15); border-radius: 3px; padding: 0 1px; }
+            .tx-diff-added { color: #86efac; background: rgba(34,197,94,0.15); border-radius: 3px; padding: 0 1px; }
+            .tx-diff-row { background: rgba(255,255,255,0.035); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+            .tx-diff-row-head { color: #94a3b8; font-size: 11px; font-weight: 700; margin-bottom: 4px; }
+            .tx-diff-line { font-size: 12.5px; line-height: 1.7; direction: rtl; }
+            .tx-diff-old { margin-bottom: 3px; }
+            .tx-diff-mismatch-banner {
+                background: rgba(239,68,68,0.14); border: 1px solid rgba(239,68,68,0.4);
+                border-radius: 10px; padding: 10px 14px; color: #fca5a5; font-size: 12.5px;
+                margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            }
+            .tx-diff-jump-btn {
+                background: rgba(239,68,68,0.25); border: 1px solid rgba(239,68,68,0.5);
+                border-radius: 8px; color: #fff; font-size: 11.5px; font-weight: 700;
+                padding: 5px 10px; cursor: pointer; flex-shrink: 0; white-space: nowrap;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function showPasteDiffPanel(lines, slots, onConfirm) {
+        ensurePanelStyles();
+        ensurePasteDiffStyles();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'tx-panel-overlay';
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+        const box = document.createElement('div');
+        box.className = 'tx-panel-box';
+        box.style.width = '720px';
+
+        const mismatch = lines.length !== slots.length;
+
+        const header = document.createElement('div');
+        header.className = 'tx-panel-header';
+        header.innerHTML = '<div class="tx-panel-title">🔍 مقارنة قبل اللصق' +
+            (mismatch ? ' <span class="tx-panel-badge pulse">عدد مش مطابق</span>' : ' <span class="tx-panel-badge">' + slots.length + '</span>') +
+            '</div>';
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'tx-panel-btn close-icon';
+        closeBtn.textContent = '✕';
+        closeBtn.onclick = () => overlay.remove();
+        header.appendChild(closeBtn);
+
+        const body = document.createElement('div');
+        body.className = 'tx-panel-body';
+
+        if (mismatch) {
+            const banner = document.createElement('div');
+            banner.className = 'tx-diff-mismatch-banner';
+            const divergeIndex = Math.min(lines.length, slots.length);
+            const divergeSlot = slots[divergeIndex] || slots[slots.length - 1] || null;
+            const divergeSerial = divergeSlot ? divergeSlot.serial : null;
+            const msg = document.createElement('span');
+            msg.textContent = '⚠️ عدد الأسطر اللي لصقتها (' + lines.length + ') مش مطابق لعدد السيجمنتات المتاحة (' + slots.length + ') - الاختلاف تقريباً بادئ عند سيجمنت ' + (divergeSerial !== null ? divergeSerial : '؟') + '. مش هينفّذ اللصق لحد ما تراجع النص وترجع تاني.';
+            banner.appendChild(msg);
+            if (divergeSerial !== null) {
+                const jumpBtn = document.createElement('div');
+                jumpBtn.className = 'tx-diff-jump-btn';
+                jumpBtn.textContent = 'روح للسيجمنت 🎯';
+                jumpBtn.onclick = () => jumpToSegment(divergeSerial);
+                banner.appendChild(jumpBtn);
+            }
+            body.appendChild(banner);
+        }
+
+        const count = Math.min(lines.length, slots.length);
+        let shownDiffs = 0;
+        for (let i = 0; i < count; i++) {
+            const slot = slots[i];
+            const newLine = lines[i];
+            if (slot.oldText === newLine) continue;
+            shownDiffs++;
+            const { outOld, outNew } = diffWords(slot.oldText, newLine);
+            const row = document.createElement('div');
+            row.className = 'tx-diff-row';
+            const rowHead = document.createElement('div');
+            rowHead.className = 'tx-diff-row-head';
+            rowHead.textContent = 'سيجمنت ' + slot.serial;
+            const oldLine = document.createElement('div');
+            oldLine.className = 'tx-diff-line tx-diff-old';
+            oldLine.appendChild(renderDiffTokens(outOld, 'old'));
+            const newLineEl = document.createElement('div');
+            newLineEl.className = 'tx-diff-line';
+            newLineEl.appendChild(renderDiffTokens(outNew, 'new'));
+            row.appendChild(rowHead);
+            row.appendChild(oldLine);
+            row.appendChild(newLineEl);
+            body.appendChild(row);
+        }
+        if (shownDiffs === 0 && !mismatch) {
+            const empty = document.createElement('div');
+            empty.className = 'tx-panel-empty';
+            empty.textContent = 'مفيش أي اختلاف حقيقي بين النص القديم والجديد في السيجمنتات المتاحة ✅';
+            body.appendChild(empty);
+        }
+
+        const footer = document.createElement('div');
+        footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; padding:12px 16px; border-top:1px solid rgba(255,255,255,0.06);';
+        const backBtn = document.createElement('button');
+        backBtn.className = 'tx-panel-btn';
+        backBtn.style.background = 'rgba(255,255,255,0.08)';
+        backBtn.textContent = 'رجوع';
+        backBtn.onclick = () => overlay.remove();
+        const confirmBtn = document.createElement('button');
+        confirmBtn.className = 'tx-panel-btn fix';
+        confirmBtn.textContent = '✅ تأكيد واللصق';
+        confirmBtn.disabled = mismatch;
+        confirmBtn.onclick = async () => {
+            confirmBtn.textContent = '⏳ جاري اللصق...';
+            confirmBtn.disabled = true;
+            await onConfirm();
+            overlay.remove();
+        };
+        footer.appendChild(backBtn);
+        footer.appendChild(confirmBtn);
+
+        box.appendChild(header);
+        box.appendChild(body);
+        box.appendChild(footer);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+    }
+
+    function addPasteButton() {
+        const btn = document.createElement('button');
+        btn.textContent = '📥 لصق النتائج';
+        btn.style.cssText = 'position:fixed;bottom:20px;left:20px;z-index:99999;background:#8b5cf6;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        btn.onclick = showPasteModal;
+        document.body.appendChild(btn);
+    }
+
+    // ==================== الجزء 7: فحص تناسق التاجات ====================
     function getRowInfo(row) {
         const serialCell = row.querySelector('.number');
         const textarea = row.querySelector('.textContent .mark-content-textarea');
@@ -2254,7 +2692,7 @@
         }
     }
 
-    // ==================== Jump straight to a segment from the results panel (v11.0) ====================
+    // ==================== الذهاب المباشر لسيجمنت من داخل لوحة النتائج (v11.0) ====================
     function getSerialFromRow(row) {
         const serialCell = row.querySelector('.number');
         if (!serialCell) return null;
@@ -2344,7 +2782,7 @@
         return true;
     }
 
-    // ==================== Keyboard navigation between errors (Alt+↓ / Alt+↑) + floating widget (v13.0) ====================
+    // ==================== التنقل بالكيبورد بين الأخطاء (Alt+↓ / Alt+↑) + الودجت العائم (v13.0) ====================
     let lastReviewProblemSerials = [];
     let lastReviewProblemSerialsSet = new Set(); // نسخة Set من نفس البيانات فوق - أسرع في lookup للماركرز جوه الجدول
     let lastReviewProblemMessages = new Map(); // serial -> [رسائل المشاكل]
@@ -2359,9 +2797,9 @@
         updateRowErrorMarkers();
     }
 
-    // Adds (or updates) a segment in the "check issues" list directly from the live check - it doesn't need to
-    // have already shown up in "🚀 full review", so the red marker (!) next to the segment number works right from the
-    // moment you type and hit an issue, and clicking it shows you the right message immediately.
+    // بتضيف (أو تحدّث) سيجمنت في قايمة "مشاكل الفحص" مباشرة من الفحص الحي (Live) - مش لازم يكون
+    // ظهر قبل كده في "🚀 مراجعة شاملة"، عشان الماركر الأحمر (!) جنب رقم السيجمنت يفضل شغال من أول
+    // ما تكتب وتلاقي مشكلة، وضغطه عليه يوريك الرسالة الصح على طول.
     function addSerialToReviewProblems(serial, messages) {
         if (!lastReviewProblemSerialsSet.has(serial)) {
             lastReviewProblemSerials.push(serial);
@@ -2371,7 +2809,7 @@
         lastReviewProblemMessages.set(serial, messages && messages.length ? messages : ['فيه مشكلة في السيجمنت ده']);
     }
 
-    // Removes a single segment from the last "full review" issues list (when fixed live) - without running a new full review
+    // بتشيل سيجمنت واحد بس من قايمة مشاكل آخر "فحص شامل" (لما يتصلح لايف) - من غير ما تعمل فحص شامل جديد
     function clearSerialFromReviewProblems(serial) {
         if (!lastReviewProblemSerialsSet.has(serial)) return;
         lastReviewProblemSerialsSet.delete(serial);
@@ -2400,7 +2838,7 @@
         }
     }
 
-    // ---- Very transparent floating widget: groups errors and shows the issue in a small tooltip on click ----
+    // ---- ودجت عائم شفاف جداً: يجمّب بين الأخطاء وبيبين المشكلة في تلميح صغير عند الضغط ----
     function ensureErrorNavStyles() {
         if (document.getElementById('tx-errnav-style')) return;
         const style = document.createElement('style');
@@ -2521,9 +2959,9 @@
         document.body.appendChild(wrap);
     }
 
-    // ==================== Hidden/transparent marker inside every segment with an error (v14.0) ====================
-    // A tiny, very transparent dot placed next to the number of any segment logged as an issue in the last "full review",
-    // it becomes clearly visible on row hover, and clicking it pops up a small glass tooltip right next to it stating the issue.
+    // ==================== ماركر مخفي/شفاف جوه كل سيجمنت فيه خطأ (v14.0) ====================
+    // نقطة صغيرة شفافة جداً بتتحط جنب رقم أي سيجمنت مسجّل كمشكلة في آخر "فحص شامل"،
+    // بتظهر بوضوح لما تعمل هوفر على الصف، ولما تدوسها بيطلعلك تلميح زجاجي صغير جنبها بالظبط بيقول المشكلة.
     function ensureRowErrorMarkerStyles() {
         if (document.getElementById('tx-row-errmarker-style')) return;
         const style = document.createElement('style');
@@ -2591,7 +3029,7 @@
             messages.map(m => '<div class="tx-errnav-tooltip-item">' + escapeHtml(m) + '</div>').join('');
         document.body.appendChild(box);
 
-        // We position it after it's added to the DOM so we know its real width and avoid it going off-screen
+        // بنحدد مكانه بعد ما يتضاف للـ DOM عشان نعرف عرضه الحقيقي ونتفادى إنه يطلع بره الشاشة
         const boxWidth = box.offsetWidth || 300;
         const boxHeight = box.offsetHeight || 80;
         let top = rect.bottom + 8;
@@ -2635,7 +3073,7 @@
         if (marker) marker.remove();
     }
 
-    // Goes through all currently visible rows and adds/removes the marker based on the last "full review" result
+    // بيمشي على كل الصفوف الظاهرة حالياً ويحط/يشيل الماركر حسب نتيجة آخر "فحص شامل"
     function updateRowErrorMarkers() {
         const rows = document.querySelectorAll('#changyuliu_table > tr');
         rows.forEach(row => {
@@ -2757,10 +3195,10 @@
         tagCheckBtnRef = btn;
     }
 
-    // ==================== Part 8: undo/redo for manual edits (v13.0) ====================
-    // Every manual edit (one line) is logged as a separate undo step, so you can step back exactly as you went.
-    // Bulk operations (paste into all segments, auto-fix a batch of segments) are logged as a single undo step
-    // that groups all the segments that changed - so if you regret it after pasting, one Ctrl+Z undoes all of them at once.
+    // ==================== الجزء 8: تراجع/إعادة (Undo/Redo) على تعديلاتك اليدوية (v13.0) ====================
+    // كل تعديل يدوي (سطر واحد) بيتسجل كخطوة تراجع منفصلة، عشان تقدر ترجع خطوة خطوة بالظبط زي ما عملت.
+    // أما العمليات الجماعية (لصق كل السيجمنتات، تصليح تلقائي لمجموعة سيجمنتات) فبتتسجل كخطوة تراجع واحدة بس
+    // تجمع كل السيجمنتات اللي اتغيرت فيها - عشان لو رجعت في كلامك بعد اللصق، ضغطة Ctrl+Z واحدة ترجعهم كلهم مرة واحدة.
     const undoStack = [];
     const redoStack = [];
     const lastKnownValues = new Map(); // serial -> آخر قيمة معروفة
@@ -2774,7 +3212,7 @@
         if (redoBtnRef) redoBtnRef.disabled = redoStack.length === 0;
     }
 
-    // Wraps around any operation that edits more than one segment at once (paste, auto-fix...) and groups them into one undo step
+    // بيلف حوالين أي عملية بتعدل أكتر من سيجمنت مرة واحدة (لصق، تصليح تلقائي...) وبيجمعهم في خطوة تراجع واحدة
     async function runBatchOperation(label, fn) {
         const collector = [];
         const previousCollector = batchCollector;
@@ -2797,7 +3235,7 @@
             redoStack.length = 0;
             updateUndoRedoButtons();
         } else if (collector.length > 0 && previousCollector) {
-            // Nested inside another batch - add these to the same outer group
+            // متداخلة جوه batch تانية - نضيفهم لنفس المجموعة الخارجية
             previousCollector.push(...collector);
         }
 
@@ -2826,7 +3264,7 @@
                 redoStack.length = 0;
                 updateUndoRedoButtons();
             }
-            // Logs this segment as "touched" for the current task (used in the end-of-task stats - part 9.5)
+            // بنسجل السيجمنت ده كـ"اتلمس" في التاسك الحالي (يستخدم في إحصائية نهاية التاسك - جزء 9.5)
             currentTaskTouchedSerials.add(serial);
         }
         lastKnownValues.set(serial, newValue);
@@ -2859,8 +3297,8 @@
         }
     }
 
-    // Steps back just one step - if the previous operation was a bulk one (paste/auto-fix), it undoes it all at once,
-    // and if it was a single manual edit, it undoes just that. Press again to undo the one before it, and so on, exactly as requested.
+    // بيرجع خطوة واحدة بس للخلف - لو كانت العملية اللي قبلها كانت جماعية (لصق/تصليح تلقائي) هترجع كلها مرة واحدة،
+    // ولو كانت تعديل يدوي واحد هترجع هو بس. اضغط تاني عشان ترجع اللي قبلها، وهكذا بالظبط زي ما طلبت.
     async function undoLastEdit() {
         if (undoStack.length === 0) { showToast('مفيش تعديلات نرجع فيها', true); return; }
         const action = undoStack.pop();
@@ -2942,10 +3380,10 @@
         if (!table) return false;
         if (table.dataset.editTrackBound) return true;
 
-        // We record the "clean" original value the moment you start typing in a segment - before the first character you type, not the
-        // first time you type in it. This matters because if capture only happened on the first "input" event, the recorded value would
-        // already be missing the character just typed, so undo would restore text missing one character from the original. Now we capture
-        // the real value before any edit at all.
+        // بنسجّل القيمة الأصلية "النضيفة" لحظة ما تدخل تكتب في سيجمنت - قبل أي حرف تكتبه - مش أول
+        // مرة تكتب فيها. ده مهم عشان لو الالتقاط كان بيحصل بس عند أول "input"، القيمة اللي بتتسجل كانت
+        // بالفعل شايلة الحرف اللي اتكتب لسه، فالتراجع كان بيرجّع نص ناقص حرف من الأصل. دلوقتي بنلقط القيمة
+        // الحقيقية قبل أي تعديل خالص.
         table.addEventListener('focusin', (e) => {
             const textarea = e.target.closest('.mark-content-textarea');
             const row = e.target.closest('tr');
@@ -2968,10 +3406,10 @@
             if (textarea && row) { scheduleOrCommitEdit(row, textarea, true); hasUnsavedChangesSinceLastSave = true; }
         }, true);
 
-        // 'focusout' (unlike 'blur') bubbles, so it reaches us here at the table level, and works correctly whether
-        // it's a real textarea or a contenteditable element (which has no 'change' event at all).
-        // Makes sure any segment you leave gets logged as an undo step immediately the moment you move to the next one - it won't wait for the
-        // 700ms debounce, and it won't miss the step if you move quickly between several segments in a row.
+        // 'focusout' (على عكس 'blur') بيتصعّد (bubbles) فبيوصلنا هنا على مستوى الجدول، وبيشتغل صح سواء
+        // مربع الكتابة textarea حقيقي أو عنصر contenteditable (اللي أصلاً معندوش حدث 'change' خالص).
+        // بيضمن إن أي سيجمنت تخرج منه يتسجّل كخطوة تراجع فورًا لحظة ما تنتقل للي بعده - مش هتستنى الـ
+        // 700ms بتاعة الديباونس ولا هتفوّت الخطوة لو اتنقلت بسرعة بين كذا سيجمنت ورا بعض.
         table.addEventListener('focusout', (e) => {
             const textarea = e.target.closest('.mark-content-textarea');
             const row = e.target.closest('tr');
@@ -2985,7 +3423,7 @@
 
     setInterval(() => { initEditTracking(); }, 800);
 
-    // ==================== Part 9: auto-recovery backup ====================
+    // ==================== الجزء 9: الحفظ الاحتياطي التلقائي (Auto-Recovery Backup) (v11.0) ====================
     const BACKUP_KEY = 'tx_auto_backup_v1';
     let backupData = {};
 
@@ -3048,11 +3486,11 @@
         document.body.appendChild(btn);
     }
 
-    // ==================== Part 9.5: daily productivity stats - counted per task only when it finishes (v13.0) ====================
-    // Note on the fix: the old stats used to add a number for every character/partial edit (even if the same segment was edited
-    // more than once), which inflated the numbers inaccurately. Now the count happens only once, when you press
-    // "✅ finish task" at the end of each task, and it counts total segments + speech time + tag time for the whole task
-    // (not the number of edits), so the number reflects the actual task no matter if a segment was edited once or ten times.
+    // ==================== الجزء 9.5: إحصائية الإنتاجية اليومية - محسوبة لكل تاسك عند إنهاءه بس (v13.0) ====================
+    // ملحوظة على التصليح: الإحصائية القديمة كانت بتزود رقم مع كل تعديل حرفي/جزئي (حتى لو نفس السيجمنت اتعدل
+    // أكتر من مرة) فكانت بتضخّم الأرقام بشكل غير دقيق. دلوقتي الحساب بيتم مرة واحدة بس لما تدوس
+    // "✅ إنهاء التاسك" في آخر كل تاسك، وبيحسب إجمالي السيجمنتات + زمن الكلام + زمن التاجات في التاسك كله
+    // (مش عدد مرات التعديل)، فالرقم بيبقى معبّر عن التاسك الحقيقي مهما اتعدل السيجمنت مرة أو عشرة.
     const DAILY_STATS_KEY = 'tx_daily_stats_v1';
     const currentTaskTouchedSerials = new Set(); // بيتجمع فيه أرقام السيجمنتات اللي اتلمست في التاسك المفتوح حالياً (معلوماتي بس)
 
@@ -3082,15 +3520,15 @@
         try { localStorage.setItem(DAILY_STATS_KEY, JSON.stringify(data)); } catch (e) { /* تجاهل */ }
     }
 
-    // Resets the whole day's stats and starts fresh (used by the "🔄 reset numbers" button inside the stats panel)
+    // بيصفّر إحصائية اليوم بالكامل ويبدأ من الصفر تاني (مستخدم من زرار "🔄 تصفير الأرقام" جوه لوحة الإحصائية)
     function resetDailyStats() {
         const data = { date: getTodayKey(), segmentsEdited: 0, speechSeconds: 0, tagSeconds: 0, tasksFinished: 0, workedSeconds: 0 };
         saveDailyStats(data);
         currentTaskTouchedSerials.clear();
     }
 
-    // Read when you press "✅ finish task": clears the whole current task (all its pages) at once, and counts
-    // the total transcribed segments + speech time + real tag time, and adds them to the day's stats once.
+    // بيتقرا لما تدوس "✅ إنهاء التاسك": بيمسح التاسك الحالي كله (بكل صفحاته) مرة واحدة، ويحسب
+    // إجمالي عدد السيجمنتات المتفرّغة + زمن الكلام + زمن التاجات الحقيقي، ويضيفهم على إحصائية اليوم مرة واحدة بس.
     async function finishCurrentTask(btn) {
         btn.textContent = '⏳ جاري احتساب التاسك...';
         btn.disabled = true;
@@ -3208,7 +3646,7 @@
         document.body.appendChild(btn);
     }
 
-    // ==================== Part 9.6: store the last "full review" result locally (v11.0) ====================
+    // ==================== الجزء 9.6: تخزين آخر نتيجة "فحص شامل" محلياً (v11.0) ====================
     const REVIEW_CACHE_KEY = 'tx_last_review_cache_v1';
 
     function cacheReviewTabs(tabs) {
@@ -3262,10 +3700,10 @@
         document.body.appendChild(btn);
     }
 
-    // ==================== Smart QA Error Reporter (v19.0) ====================
-    // Records the original text of every segment the first time you touch it with an edit (before you change it), and keeps it saved for the whole task.
-    // Any time you press "🧪 QA check" it compares the original text with the current final text for every edited segment,
-    // and gives you a categorized report (tags/spacing/grammar → spelling → other edits) you can export as a file to send to the transcriber.
+    // ==================== فاحص جودة ذكي (Smart QA Error Reporter) (v19.0) ====================
+    // بيسجّل النص الأصلي لكل سيجمنت أول ما تلمسه بالتعديل (قبل ما تغيّره)، وبيفضل محفوظ طول التاسك.
+    // في أي وقت تقدر تدوس "🧪 فحص QA" فيقارن النص الأصلي بالنص النهائي الحالي لكل سيجمنت اتعدل،
+    // ويطلعلك تقرير مصنّف (تاجات/مسافات/قواعد ← إملاء ← تعديلات تانية) تقدر تصدّره كملف يتبعت للمفرغ.
     const QA_BASELINE_KEY = 'tx_qa_baseline_v1';
     const QA_REPORT_CACHE_KEY = 'tx_qa_report_cache_v1';
 
@@ -3299,9 +3737,9 @@
         persistQABaseline();
     }
 
-    // ---- Cache of tag issues (tag missing an attribute / NOISE tag under half a second) detected from "⚠️ tag check"
-    // or "🚀 full review" - lets "🧪 QA check" catch that the issue got fixed even if the fix was
-    // by moving the tag boundary on the player (not by typing new text in the segment), so it wouldn't show up in a normal text comparison
+    // ---- كاش لمشاكل التاجات (تاج من غير Attribute / تاج NOISE أقل من نص ثانية) المكتشفة من "⚠️ فحص التاجات"
+    // أو "🚀 مراجعة شاملة" - ده بيخلي "🧪 فحص QA" يقدر يلاقط إن المشكلة دي اتصلحت حتى لو التصليح كان
+    // بتحريك حدود التاج على المشغل (مش بكتابة نص جديد في السيجمنت)، وبالتالي مكنش هيظهر في مقارنة النص العادية
     const QA_TAG_PROBLEMS_KEY = 'tx_qa_tag_problems_v1';
 
     function cacheQATagProblems(missingAttrTags, shortDurationTags) {
@@ -3325,9 +3763,9 @@
         return null;
     }
 
-    // ---- Adds a single tag issue (caught live while typing) to the tag issues cache right away - without waiting
-    // for the user to press "⚠️ tag check" or "🚀 full review" first. This way "🧪 QA check" can catch
-    // that this issue got fixed later, even if it was never in an old cache to begin with.
+    // بتضيف مشكلة تاج واحدة (اتلقطت لايف وإحنا بنكتب) لكاش مشاكل التاجات فورًا - من غير ما ننتظر
+    // إن المستخدم يدوس "⚠️ فحص التاجات" أو "🚀 مراجعة شاملة" الأول. كده "🧪 فحص QA" يقدر يلقط
+    // إن المشكلة دي اتصلحت لاحقاً حتى لو مكانتش موجودة في كاش قديم أصلاً.
     function mergeQATagProblem(kind, serial, duration) {
         try {
             const existing = loadQATagProblemsFromStorage() || {};
@@ -3344,7 +3782,7 @@
         } catch (e) { /* تجاهل */ }
     }
 
-    // ---- Word-level diff (LCS) - returns only the differences (replace/delete/insert) ----
+    // ---- Diff على مستوى الكلمة (LCS) - بيرجع بس الفروقات (استبدال/حذف/إضافة) ----
     function wordDiff(oldText, newText) {
         const oldWords = (oldText || '').split(/\s+/).filter(Boolean);
         const newWords = (newText || '').split(/\s+/).filter(Boolean);
@@ -3380,8 +3818,8 @@
         return merged;
     }
 
-    // Returns the grammatically correct "count + time(s)" Arabic phrase based on number/counted-noun rules:
-    // 1 = "once", 2 = "twice", 3-10 = "X times", 11+ = "X time"
+    // بيرجع صيغة "عدد + مرة" الصح نحوياً حسب قواعد العدد والمعدود بالعربي:
+    // 1 = "مرة واحدة"، 2 = "مرتين"، 3-10 = "X مرات"، 11 فأكتر = "X مرة"
     function formatArabicTimes(count) {
         if (count === 1) return 'مرة واحدة';
         if (count === 2) return 'مرتين';
@@ -3389,7 +3827,7 @@
         return count + ' مرة';
     }
 
-    // Tries to classify the type of difference between two similarly-shaped words (same letters except one) - the most common Arabic spelling mistakes
+    // بتحاول تصنّف نوع الفرق بين كلمتين متشابهتين في الطول (نفس الحروف عدا حرف معين) - أشهر أخطاء الإملاء العربي
     function classifyWordChange(oldWord, newWord) {
         if (oldWord === newWord || oldWord.length !== newWord.length) return null;
         const groups = [['ا', 'أ', 'إ', 'آ'], ['ة', 'ه'], ['ي', 'ى']];
@@ -3408,10 +3846,10 @@
 
     const QA_LABELS = { hamza: 'تصحيح همزة', ta_ha: 'تصحيح تاء مربوطة/هاء', ya_alef: 'تصحيح ياء/ألف مقصورة' };
 
-    // Cleans the text of "cosmetic" differences that aren't real (extra spaces at start/end, double spaces, invisible
-    // characters like Zero-Width Space/BOM that can get stuck in by accident during copy/paste, and NFC/NFD Unicode representation differences)
-    // - this is exactly what stops "deleted a word and retyped the exact same one" from being counted as an error or a new edit,
-    // since the real comparison (is there an actual difference in meaning/content?) happens on this cleaned version, not the raw text.
+    // بتنضّف النص من فروقات "شكلية" مش حقيقية (مسافات زايدة في الأول/الآخر، مسافات مزدوجة، محارف غير
+    // ظاهرة زي Zero-Width Space/BOM ممكن تتلزق عن طريق الخطأ وقت النسخ/اللصق، واختلاف تمثيل يونيكود NFC/NFD)
+    // - ده بالظبط اللي يمنع إن "مسحت كلمة ورجعت كتبتها هي هي تاني" يتحسب غلط أو تعديل جديد،
+    // لأن المقارنة الحقيقية (هل فيه فرق فعلي في المعنى/الكلام؟) بتتم على النسخة المنضّفة دي مش على الراو نص.
     function normalizeForQACompare(s) {
         return (s || '')
             .normalize('NFC')
@@ -3420,30 +3858,30 @@
             .replace(/\s+/g, ' ');
     }
 
-    // Returns true only if there's a real difference (after cleaning) between the two texts - this is the single source of truth for "was this actually edited or not"
+    // بيرجع true بس لو فيه فرق حقيقي (بعد التنضيف) بين النصين - ده المرجع الوحيد اللي بيحدد "ده تعديل فعلاً ولا لأ"
     function hasRealTextChange(oldText, newText) {
         return normalizeForQACompare(oldText) !== normalizeForQACompare(newText);
     }
 
-    // Compares one segment (original text vs final text) and returns all notes, categorized by priority
+    // بيقارن سيجمنت واحد (نص أصلي مقابل نص نهائي) وبيرجع كل الملاحظات مبوّبة حسب الأولوية
     function analyzeSegmentQA(serial, originalText, finalText) {
         const entry = { serial, originalText, finalText, criticalIssues: [], spellingIssues: [], otherChanges: [] };
 
-        // 1) Grammar violations that existed in the original and got fixed in the final (reuses the existing writing-rules checker)
+        // 1) مخالفات قواعد كانت موجودة في الأصلي واتصلحت في النهائي (بيعيد استخدام فاحص قواعد الكتابة الموجود بالفعل)
         const oldIssues = checkWritingRules(originalText, false);
         const newIssuesSet = new Set(checkWritingRules(finalText, false));
         oldIssues.forEach(issue => { if (!newIssuesSet.has(issue)) entry.criticalIssues.push('تم تصحيح مخالفة قواعد: ' + issue); });
 
-        // 2) A tag's shape changed (text that looks like a tag, like <NOISE>, changed or got removed) - compared after cleaning so a hidden
-        // extra space or invisible character we didn't add on purpose doesn't get counted as a fake "tag edit"
+        // 2) تغيّر شكل التاج (نص شكله تاج زي <NOISE> اتغيّر أو اتشال) - بنقارن بعد التنضيف عشان مسافة خفية
+        // زايدة أو محرف غير ظاهر مالزقناهوش بالغلط ميتحسبش "تعديل تاج" وهمي
         const oldIsTag = /^<[A-Za-z]+>$/.test(normalizeForQACompare(originalText));
         const newIsTag = /^<[A-Za-z]+>$/.test(normalizeForQACompare(finalText));
         if ((oldIsTag || newIsTag) && hasRealTextChange(originalText, finalText)) {
             entry.criticalIssues.push('تعديل في شكل التاج: "' + originalText.trim() + '" ← "' + finalText.trim() + '"');
         }
 
-        // 3) Word-level differences (spelling / replace / delete / insert) - we run the diff on the cleaned version
-        // so a word that got deleted and retyped exactly the same (even with a hidden copy/paste character) doesn't get flagged as a difference
+        // 3) فروقات على مستوى الكلمة (إملاء / استبدال / حذف / إضافة) - بنشغّل الـ diff على النسخة المنضّفة
+        // عشان كلمة اتمسحت ورجعت اتكتبت هي هي بالظبط (حتى لو حصل نسخ/لصق فيها محرف مخفي) متترصدش كفرق
         wordDiff(normalizeForQACompare(originalText), normalizeForQACompare(finalText)).forEach(d => {
             if (d.type === 'replace') {
                 const cls = classifyWordChange(d.oldWord, d.newWord);
@@ -3514,8 +3952,8 @@
             entry.otherChanges.push(...analyzed.otherChanges);
         });
 
-        // Catches a fixed tag issue (missing attribute / NOISE tag under half a second) even if the fix happened
-        // without touching the segment's text itself (like adjusting the tag boundary from the player), since that wouldn't show up in a normal text comparison
+        // بيلقط تصليح مشاكل التاجات (Attribute ناقص / تاج NOISE مدته أقل من نص ثانية) حتى لو حصل التصليح
+        // من غير ما تلمس نص السيجمنت نفسه (زي تعديل حدود التاج من على المشغل)، عشان دي مش هتظهر في مقارنة النص العادية
         if (tagProblems) {
             (tagProblems.missingAttrTags || []).forEach(serial => {
                 const cur = currentInfo[serial];
@@ -3534,10 +3972,10 @@
                     getOrCreateEntry(serial).criticalIssues.push('تم تصليح: تاج "<NOISE>" كانت مدته أقل من نص ثانية (' + item.duration.toFixed(3) + 's)، واتشال أو اتغيّر خالص');
                     continue;
                 }
-                // Important: this segment's row element might not exist in the DOM right now if the page
-                // changed after collectAllRowInfo ran over it (it scrolls through all pages and leaves the last one visible),
-                // so we first make sure it's actually loaded before reading its duration - otherwise this used to return null and the fix wouldn't count
-                // even if the tag really was extended from the player.
+                // مهم: عنصر الـ region بتاع السيجمنت ده ممكن يكون مش موجود في الـ DOM دلوقتي لو الصفحة
+                // اتغيّرت بعد ما collectAllRowInfo عدّى عليه (بيسكرول على كل الصفحات وبيسيب آخر واحدة ظاهرة)،
+                // فبنتأكد الأول إنه محمّل فعلياً قبل ما نقرا مدته - عشان كده كان بيرجع null وميتحسبش تصليح
+                // حتى لو فعلاً طوّلت التاج من على المشغل.
                 await locateRowBySerial(serial);
                 const curDuration = getRegionDuration(cur.regionId);
                 if (curDuration === null || curDuration < 0.5) continue; // لسه قصيرة أو معرفناش نتأكد - متتحسبش تصليح
@@ -3559,9 +3997,9 @@
         showQAReportPanel(segmentReports);
     }
 
-    // ==================== Part 9.6.1: categorize recurring mistakes + ready-made message for the transcriber (v20.0) ====================
-    // Takes the text of any note (from criticalIssues/spellingIssues/otherChanges) and figures out its general type
-    // so we can group "most common weak points" instead of every note standing alone. Order matters: we check the most specific case first.
+    // ==================== الجزء 9.6.1: تصنيف الأخطاء المتكررة + رسالة جاهزة للمفرغ (v20.0) ====================
+    // بياخد نص أي ملاحظة (من criticalIssues/spellingIssues/otherChanges) ويحدد نوعها العام
+    // عشان نقدر نجمع "أشهر نقط الضعف" بدل ما كل ملاحظة تفضل لوحدها. الترتيب مهم: بنتأكد من الأخص الأدق الأول.
     function categorizeQAIssue(text) {
         if (text.includes('كان من غير Attribute متحدد له')) return { key: 'tag_missing_attr', label: '🏷️ تاج بدون Attribute محدد (زي NOISE بلا Attribute)' };
         if (text.includes('كانت مدته أقل من نص ثانية')) return { key: 'tag_short_duration', label: '⏱️ تاج NOISE مدته أقل من نص ثانية' };
@@ -3583,8 +4021,8 @@
         return { key: 'other', label: '✏️ تعديلات أخرى' };
     }
 
-    // Tries to pull a short "concrete example" out of the note text (like "eno" ← "enno" or "<NOISE>" ← "<DEAF>")
-    // so the message sent to the transcriber isn't vague (like "general spelling") and shows them exactly what the mistake looked like
+    // بتحاول تطلّع "مثال ملموس" مختصر من نص الملاحظة (زي "انه" ← "إنه" أو "<NOISE>" ← "<DEAF>")
+    // عشان الرسالة اللي بتتبعت للمفرغ متبقاش عايمة (زي "إملاء عام") وتوضحله بالظبط شكل الغلط
     function extractExampleFromIssueText(text) {
         const quotes = text.match(/"([^"]*)"/g);
         if (quotes && quotes.length >= 2) return quotes[0] + ' ← ' + quotes[1];
@@ -3597,8 +4035,8 @@
         return null;
     }
 
-    // Gathers all notes from every segment into categories, and returns them sorted from most to least frequent, each category
-    // comes with its repeat count, the segment numbers it appeared in (deduplicated), and concrete examples (up to 2) of what the mistake actually looked like
+    // بيجمع كل ملاحظات كل السيجمنتات في تصنيفات، وبيرجعهم مرتبين من الأكتر تكراراً للأقل، كل تصنيف
+    // معاه عدد مرات تكراره، أرقام السيجمنتات اللي ظهر فيها (من غير تكرار)، وأمثلة ملموسة (لحد 2) لشكل الغلط فعلياً
     function computeQAMistakePatterns(segmentReports) {
         const map = new Map(); // key -> { label, count, serials:Set, examples:[] }
         segmentReports.forEach(r => {
@@ -3619,15 +4057,15 @@
             .sort((a, b) => b.count - a.count);
     }
 
-    // Returns the segment numbers as a short, readable string (not a long list that wastes the reader's time)
+    // بيرجع نص أرقام السيجمنتات بشكل مختصر ومقروء (مش قايمة طويلة تضيّع وقت اللي بيقرأها)
     function formatSerialsCompact(serials, maxShown) {
         const limit = maxShown || 12;
         if (serials.length <= limit) return serials.join('، ');
         return serials.slice(0, limit).join('، ') + ' ... (+' + (serials.length - limit) + ' كمان)';
     }
 
-    // Several varied professional phrasings for the message - in the reviewer's own voice (singular, not plural), so each
-    // new message comes out phrased differently from the last, instead of the same repeated text on every export
+    // مصفوفات صياغات احترافية متنوعة للرسالة - بصوت المراجع الفردي نفسه (مفرد مش جمع)، عشان كل رسالة
+    // جديدة تطلع بصياغة مختلفة عن اللي قبلها، بدل ما يطلع نفس النص المكرر في كل تصدير
     const TRANSCRIBER_GREETINGS = [
         'السلام عليكم، تحية طيبة 🌹',
         'أهلاً بيك، تحية ليك 🌹',
@@ -3653,9 +4091,9 @@
 
     const transcriberMessageState = { greeting: { last: -1 }, intro: { last: -1 }, closing: { last: -1 } };
 
-    // Builds a ready-made message in Arabic, polite, in the reviewer's own voice (singular), summarizing the most common recurring weak points and where they are
-    // with a concrete example of what the mistake actually looked like (not a vague description) - as one BULK block ready to copy and paste,
-    // with a blank line for the reviewer to fill in the task number themselves. The phrasing differs every time the message is built.
+    // بيبني رسالة جاهزة بالعربي، مهذبة، بصوت المراجع نفسه (مفرد)، بتلخّص أشهر نقط الضعف المتكررة ومكانها
+    // مع مثال ملموس لشكل الغلط فعلياً (مش وصف عايم) - بشكل BULK (كتلة واحدة) جاهزة للنسخ واللصق،
+    // مع سطر فاضي للمراجع يحط فيه رقم التاسك بنفسه. الصياغة بتختلف في كل مرة تتبني فيها الرسالة.
     function buildTranscriberBulkMessage(patterns) {
         const top = patterns.filter(p => p.count > 0).slice(0, 8);
         if (top.length === 0) return '';
@@ -3676,8 +4114,8 @@
         return lines.join('\n');
     }
 
-    // A note for the reviewer themselves (not the transcriber) - reminding them they can edit the report's wording however they like,
-    // and add anything they noticed themselves that the tool couldn't catch, before sending it to the transcriber.
+    // ملحوظة للمراجع نفسه (مش للمفرغ) - بتفكّره إنه يقدر يعدّل في صياغة التقرير وطريقة كتابته زي ما يحب،
+    // ويضيف عليها أي حاجة لاحظها بنفسه والأداة ماقدرتش تكتشفها، قبل ما يبعتها للمفرغ.
     function buildReviewerNote() {
         return 'ملحوظة ليك إنت (المراجع): التقرير ده وأي رسالة جواه اتبنوا آلياً كنقطة بداية بس - اتصرف فيهم زي ما يريحك، '
             + 'عدّل في الصياغة أو الأسلوب بما يتناسب مع طريقتك في التواصل، وضيف عليهم أي ملاحظات تانية لاحظتها بنفسك ولم تلقطها الأداة، '
@@ -3717,7 +4155,7 @@
         const otherSections = segmentReports.filter(r => r.otherChanges.length > 0)
             .map(r => ({ heading: 'سيجمنت ' + r.serial, items: r.otherChanges.map(i => ({ text: i, type: 'info' })) }));
 
-        // Most common recurring mistakes + ready-made message for the transcriber + note for the reviewer
+        // أشهر الأخطاء المتكررة + رسالة جاهزة للمفرغ + ملحوظة للمراجع نفسه
         const mistakePatterns = computeQAMistakePatterns(segmentReports);
         const mistakesSections = [{
             heading: null,
@@ -3773,7 +4211,7 @@
                 '</div>';
         });
 
-        // Most common recurring mistakes
+        // أشهر الأخطاء المتكررة
         const mistakePatterns = computeQAMistakePatterns(segmentReports).filter(p => p.count > 0);
         const mistakesHtml = mistakePatterns.length
             ? '<ol class="mistakes-list">' + mistakePatterns.map(p =>
@@ -3783,7 +4221,7 @@
               ).join('') + '</ol>'
             : '<p class="muted">مفيش نمط متكرر واضح لحد دلوقتي.</p>';
 
-        // Ready-made message for the transcriber (BULK) - in a textarea you can edit however you like, with a one-click copy button
+        // رسالة جاهزة للمفرغ (BULK) - في textarea تقدر تعدّل فيها زي ما تحب، مع زرار نسخ بضغطة واحدة
         const transcriberMessage = buildTranscriberBulkMessage(mistakePatterns);
         const messageHtml = transcriberMessage
             ? '<div class="msg-wrap">' +
@@ -3899,11 +4337,11 @@
         document.body.appendChild(btn);
     }
 
-    // ==================== Part 9.7: formatted QA report export - fully in English (v13.0) ====================
-    // Per your request, the exported file is now entirely in English (title + stats + all the full-review details inside),
-    // even though the tool's own UI still runs in Arabic. Translation only happens at export time, not on the live UI.
+    // ==================== الجزء 9.7: تصدير تقرير جودة منسّق - بالإنجليزي بالكامل (v13.0) ====================
+    // بناءً على طلبك، الملف الناتج بقى كله بالإنجليزي (العنوان + الإحصائيات + كل تفاصيل الفحص الشامل جواه)،
+    // حتى لو واجهة الأداة نفسها لسه شغالة بالعربي. الترجمة بتتم فقط وقت التصدير، مش على الواجهة الحية.
     const REPORT_TRANSLATIONS = [
-        // tabs / main headings
+        // تبويبات / عناوين رئيسية
         [/^📊\s*نظرة عامة$/, '📊 Overview'],
         [/^🔍\s*المسافات$/, '🔍 Whitespace'],
         [/^🈯\s*إنجليزي\/تشكيل$/, '🈯 English / Diacritics'],
@@ -3911,29 +4349,29 @@
         [/^⚠️\s*التاجات$/, '⚠️ Tags'],
         [/^🕒\s*آخر مراجعة$/, '🕒 Last Review'],
 
-        // overview
+        // نظرة عامة
         [/^🗣️\s*زمن الكلام الفعلي:\s*([\d.]+)\s*ثانية\s*\((\d+)\s*دقيقة و\s*([\d.]+)\s*ثانية\)\s*—\s*(\d+)\s*سيجمنت$/,
             '🗣️ Actual speech time: $1s ($2 min $3 sec) — $4 segments'],
         [/^⏱️\s*زمن التاجات:\s*([\d.]+)\s*ثانية\s*\((\d+)\s*دقيقة و\s*([\d.]+)\s*ثانية\)\s*—\s*(\d+)\s*سيجمنت$/,
             '⏱️ Tags time: $1s ($2 min $3 sec) — $4 segments'],
         [/^تفصيل زمن التاجات حسب النوع$/, 'Tag time breakdown by type'],
 
-        // spacing
+        // مسافات
         [/^📏\s*مسافة زيادة في أول\/آخر السيجمنت$/, '📏 Leading/trailing whitespace'],
         [/^📏\s*مسافة مزدوجة بين كلمتين جوه السيجمنت$/, '📏 Double space between words inside a segment'],
 
-        // English/diacritics
+        // إنجليزي/تشكيل
         [/^🔤\s*سيجمنتات فيها 3 كلمات إنجليزي أو أكتر$/, '🔤 Segments with 3+ English words'],
         [/^🚫\s*سيجمنتات فيها تشكيل عربي$/, '🚫 Segments with Arabic diacritics (tashkeel)'],
 
-        // tags
+        // تاجات
         [/^🔗\s*تاجات متتالية من نفس النوع \(مرشحة للدمج\)$/, '🔗 Consecutive tags of the same type (merge candidates)'],
         [/^❌\s*سيجمنتات فيها نص تاج بدون Attribute$/, '❌ Tag-shaped text without an attribute'],
         [/^⏱️\s*تاجات NOISE أقل من نص ثانية$/, '⏱️ NOISE tags shorter than 0.5s'],
         [/^🔢\s*سيجمنتات فيها أكتر من تاج واحد$/, '🔢 Segments with more than one tag'],
         [/^📝\s*سيجمنتات فيها تاج \+ جملة كلام مع بعض$/, '📝 Segments mixing a tag with spoken text'],
 
-        // empty messages
+        // رسائل فارغة
         [/^لا يوجد بيانات$/, 'No data'],
         [/^مفيش أي مشاكل مسافات$/, 'No whitespace issues'],
         [/^مفيش سيجمنتات فيها 3 كلمات إنجليزي أو أي تشكيل عربي$/, 'No segments with 3+ English words or Arabic diacritics'],
@@ -3941,16 +4379,16 @@
         [/^مفيش أي مشاكل في التاجات$/, 'No tag issues'],
         [/^مفيش أي مشاكل$/, 'No issues'],
 
-        // generic items: "segment N" and "segment A and B (tag)" and "segment N — C words: words" and "segment N (extra)"
+        // عناصر عامة: "سيجمنت N" و"سيجمنت A و B (tag)" و"سيجمنت N — C كلمة: words" و"سيجمنت N (extra)"
         [/^سيجمنت\s+(\d+)\s+و\s+(\d+)\s*\(([^)]*)\)$/, 'Segment $1 & $2 ($3)'],
         [/^سيجمنت\s+(\d+)\s*—\s*(\d+)\s*كلمة:\s*(.*)$/, 'Segment $1 — $2 word(s): $3'],
         [/^سيجمنت\s+(\d+)\s*\(([^)]*)\)$/, 'Segment $1 ($2)'],
         [/^سيجمنت\s+(\d+)$/, 'Segment $1'],
 
-        // timestamp note for the stored version
+        // ملحوظة زمنية للنسخة المخزنة
         [/^🕒\s*النتيجة دي محفوظة من\s*(\d+)\s*دقيقة.*$/, '🕒 This cached result is $1 minute(s) old'],
 
-        // writing rules - fixed messages
+        // قواعد الكتابة - رسائل ثابتة
         [/^⚪\s*سيجمنت فاضي تماماً — مفيش نص ولا تاج$/, '⚪ Segment is completely empty — no text and no tag'],
         [/^🚫\s*علامة ترقيم ممنوعة \(! : ; ' "\)$/, '🚫 Disallowed punctuation mark (! : ; \' ")'],
         [/^🔢\s*أرقام هندية بدل الغربية$/, '🔢 Eastern Arabic digits instead of Western digits'],
@@ -3966,7 +4404,7 @@
         [/^🔤\s*"([^"]*)"\s*كلمة إنجليزية مكتوبة عربي — المفروض:\s*(.*)$/, '🔤 "$1" is an English word transliterated in Arabic — should be: $2'],
         [/^✏️\s*"([^"]*)"\s*ناقصة همزة — المفروض:\s*(.*)$/, '✏️ "$1" is missing a hamza — should be: $2'],
 
-        // filler/hashtag
+        // فيلر/هاشتاج
         [/^#️⃣\s*عدد علامات # فردي \(مش متزاوج\) — فيه هاشتاج ناقص فتح أو قفل$/, '#️⃣ Odd number of "#" marks — an unmatched hashtag open/close'],
         [/^#️⃣\s*مسافة زايدة جوه الهاشتاج، المفروض تبقى لازقة:\s*(.*)$/, '#️⃣ Extra space inside hashtag, should be tight: $1'],
         [/^#️⃣\s*مسافة مزدوجة جوه الهاشتاج:\s*(.*)$/, '#️⃣ Double space inside hashtag: $1'],
@@ -3974,7 +4412,7 @@
         [/^#️⃣\s*كلمة فيلر\s*"([^"]*)"\s*من غير هاشتاج حواليها خالص$/, '#️⃣ Filler word "$1" is not wrapped in a hashtag at all'],
         [/^#️⃣\s*مجموعتين هاشتاج متجاورتين لازم يتدمجوا في واحد:\s*(.*)$/, '#️⃣ Two adjacent hashtag groups must be merged into one: $1'],
 
-        // today's stats
+        // إحصائية اليوم
         [/^✅\s*عدد التاسكات اللي خلّصتها النهاردة:\s*(\d+)$/, '✅ Tasks finished today: $1'],
         [/^✏️\s*إجمالي السيجمنتات المُفرّغة النهاردة:\s*(\d+)$/, '✏️ Total segments transcribed today: $1'],
         [/^🗣️\s*زمن الكلام اللي فرّغته النهاردة:\s*([\d.]+)\s*ثانية\s*\((\d+)\s*دقيقة و\s*([\d.]+)\s*ثانية\)$/, '🗣️ Speech time transcribed today: $1s ($2 min $3 sec)'],
@@ -3990,7 +4428,7 @@
         for (const [regex, replacement] of REPORT_TRANSLATIONS) {
             if (regex.test(str)) return str.replace(regex, replacement);
         }
-        // no matching template - at minimum translate the word "segment" as a fallback, and leave the rest as-is
+        // مفيش قالب مطابق - بنترجم على الأقل كلمة "سيجمنت" لـ Segment كحل احتياطي، والباقي زي ما هو
         return str.replace(/سيجمنت/g, 'Segment');
     }
 
@@ -4085,7 +4523,7 @@
         document.body.appendChild(btn);
     }
 
-    // ==================== Unified modern styling for all buttons (v10.0) ====================
+    // ==================== تنسيق موحّد وعصري لكل الأزرار (v10.0) ====================
     function injectModernButtonStyle() {
         if (document.getElementById('tx-tool-style')) return;
         const style = document.createElement('style');
@@ -4127,7 +4565,7 @@
 
         document.querySelectorAll('button').forEach(btn => {
             const txt = btn.textContent.trim();
-            const isOurButton = /^[📋🔍⚠️🈯📐🚀↩️↪️🩹📊📂🧾✅🧪📤🔁]/.test(txt);
+            const isOurButton = /^[📋📎🔍📥⚠️🈯📐🚀↩️↪️🩹📊📂🧾✅🧪📤🔁]/.test(txt);
             if (!isOurButton) return;
 
             btn.classList.add('tx-tool-btn');
@@ -4137,7 +4575,7 @@
         });
     }
 
-    // ==================== Smart floating menu - Dynamic Island style (v10.0) ====================
+    // ==================== القائمة العائمة الذكية - Dynamic Island Style (v10.0) ====================
     function ensureMascotStyles() {
         if (document.getElementById('tx-mascot-style')) return;
         const style = document.createElement('style');
@@ -4405,9 +4843,12 @@
     }
 
     function initButtons() {
+        addCopyButton();
         addWhitespaceButton();
+        addCopyLastButton();
         addEnglishTashkeelButton();
         addWritingRulesButton();
+        addPasteButton();
         addTagCheckButton();
         addFullReviewButton();
         addUndoButton();
@@ -4424,17 +4865,17 @@
         addTaskTimerWidget();
         hookSiteSaveButton();
 
-        // Runs immediately (no setTimeout) so the buttons aren't scattered for even a single frame before they group
-        // inside the floating menu - any delay here used to cause a visible "flash" of the buttons on page load.
+        // بتتنفذ فورًا (من غير setTimeout) عشان الأزرار متتلمّش مبعثرة ولا لحظة واحدة قبل ما تتجمع
+        // جوه القائمة العائمة - أي تأخير هنا كان بيسبب "ومضة" بصية على الأزرار وقت تحميل الصفحة.
         softenAllButtons();
         setupFloatingMenu();
     }
 
-    // Note: initButtons() is now called at the end of the file (after all definitions) to avoid an ordering
-    // conflict - it used to call addTaskTimerWidget() before taskTimerStart was even defined, which
-    // used to stop initButtons() halfway through and leave the rest of the buttons ungrouped in the menu.
+    // ملحوظة: initButtons() بقى بينادَى في آخر الملف (بعد كل التعريفات) عشان ميحصلش تعارض
+    // ترتيب - كان بينادي على addTaskTimerWidget() قبل ما taskTimerStart يتعرّف أصلاً، وده اللي
+    // كان بيوقّف تنفيذ initButtons() في نص الطريق ويسيب باقي الأزرار من غير ما تتلمّ في القائمة.
 
-    // ==================== Part 10: live check ====================
+    // ==================== الجزء 10: الفحص الحي ====================
     function evaluateRowLive(row) {
         const serialCell = row.querySelector('.number');
         const contentCell = row.querySelector('.textContent .mark-content-textarea');
@@ -4452,8 +4893,8 @@
         const isTagShaped = /^<[A-Za-z]+>$/.test(raw);
         const liveSerial = getSerialFromRow(row);
 
-        // We collect real messages for each issue (not just a count) so the marker (!) can show you the exact
-        // issue on click, even if this segment hasn't shown up in "🚀 full review" at all yet.
+        // بنجمع رسائل حقيقية لكل مشكلة (مش بس عداد أرقام) عشان الماركر (!) لما يتضغط يقدر يوريك المشكلة
+        // بالظبط، حتى لو السيجمنت ده لسه ما ظهرش في "🚀 مراجعة شاملة" خالص.
         const liveMessages = [];
 
         if (rawUntrimmed && /^\s|\s$/.test(rawUntrimmed)) liveMessages.push('📏 فيه مسافة زايدة في أول أو آخر السيجمنت');
@@ -4494,9 +4935,9 @@
             }, 4000);
         }
 
-        // Syncs the small marker (the transparent dot) with the live check result in real time: if there's an issue, the marker
-        // gets added (or its messages get updated) immediately - it doesn't need "🚀 full review" to have already run. And if
-        // the segment becomes clean, the marker disappears on its own immediately.
+        // بيزامن الماركر الصغير (الدايرة الشفافة) مع نتيجة الفحص الحي لحظة بلحظة: لو فيه مشكلة، الماركر
+        // بيتحط (أو رسائله بتتحدّث) فورًا - مش لازم تكون "🚀 مراجعة شاملة" اتعملت قبل كده خالص. ولو
+        // السيجمنت بقى سليم، الماركر بيختفي فورًا لوحده.
         if (liveSerial !== null) {
             if (issues === 0) {
                 if (lastReviewProblemSerialsSet.has(liveSerial)) clearSerialFromReviewProblems(liveSerial);
@@ -4535,17 +4976,17 @@
         return true;
     }
 
-    // Same as above: we leave it running the whole time so it auto-reattaches on any new task that opens
-    // without a refresh - this used to be the cause of the live red glow and error marker disappearing after a while.
+    // زي الفوق بالظبط: نسيبه شغال طول الوقت عشان يعيد الربط أوتوماتيك على أي تاسك جديد يتفتح
+    // من غير Refresh - وده اللي كان سبب اختفاء التوهج الأحمر اللايف وماركر الأخطاء بعد فترة.
     setInterval(() => { initLiveChecker(); }, 800);
 
-    // "Dumb brute-force" periodic sync on all visible rows - not tied to MutationObserver at all.
-    // Reason: fixes a case like "add an attribute to a tag and the error still shows" - because some edits
-    // (especially attributes/tags) make the site fully replace the <tr> element instead of just editing inside it,
-    // and MutationObserver doesn't always catch the right row then (since the old element vanished before we caught it).
-    // The safer fix: every second or so we re-evaluate all visible rows from scratch, so no matter how the edit happened
-    // (typing, attribute, tag, even paste) the marker and red glow sync up on their own without you needing
-    // to run "full review" again.
+    // مزامنة دورية "بالقوة الغبية" على كل الصفوف الظاهرة - مش مربوطة بـ MutationObserver خالص.
+    // السبب: تصليح مشكلة زي "حط Attribute على تاج وبعدين خلص الخطأ لسه بيبان" - لأن بعض التعديلات
+    // (خصوصاً الأتربيوت/التاجات) بتخلي الموقع يعمل استبدال كامل لعنصر <tr> بدل ما يعدّل جواه بس،
+    // وساعتها MutationObserver مش دايماً بيلاقي الصف الصحيح (لأن العنصر القديم اختفى قبل ما نلحقه).
+    // الحل الأضمن: كل ثانية وشوية نعيد تقييم كل الصفوف الظاهرة من الصفر، فمهما كانت طريقة التعديل
+    // (تايبنج، أتربيوت، تاج، حتى Paste) الماركر والتوهج الأحمر هيتزامنوا لوحدهم من غير ما تحتاج
+    // تعمل "فحص شامل" تاني.
     setInterval(() => {
         const rows = document.querySelectorAll('#changyuliu_table > tr');
         if (!rows.length) return;
@@ -4553,11 +4994,11 @@
         updateRowErrorMarkers();
     }, 1100);
 
-    // ==================== Help Center - keyboard shortcuts + full tool guide (tabbed) ====================
-    // F2 = full review | F4 = finish task | T = tag check
-    // Ctrl+Z / Cmd+Z = step-by-step undo (one manual edit, or a whole batch like an auto-fix run)
-    // Ctrl+Y or Ctrl+Shift+Z = redo | Ctrl+Shift+V = multi-clipboard ring
-    // Alt+↓ / Alt+↑ = jump to the next/previous error from the last "full review" + show a hint of the problem
+    // ==================== مركز المساعدة - اختصارات الكيبورد + شرح كامل للأداة (تابين) ====================
+    // F2 = فحص شامل | F4 = إنهاء التاسك | T = فحص التاجات | F8 = نسخ كل السيجمنتات | F9 = فتح نافذة لصق النتائج
+    // Ctrl+Z / Cmd+Z = تراجع خطوة بخطوة (تعديل يدوي واحد أو دفعة كاملة زي اللصق/التصليح التلقائي)
+    // Ctrl+Y أو Ctrl+Shift+Z = إعادة | Ctrl+Shift+V = حافظة النصوص المتعددة
+    // Alt+↓ / Alt+↑ = التنقل للخطأ اللي بعده/قبله من آخر "فحص شامل" + عرض تلميح بالمشكلة
     function ensureShortcutSheetStyles() {
         if (document.getElementById('tx-kbd-style')) return;
         const style = document.createElement('style');
@@ -4621,14 +5062,16 @@
         document.head.appendChild(style);
     }
 
-    // Tool guide data - each entry: title, a short description that's always visible, and a full
-    // explanation shown only after clicking "read more".
+    // بيانات شرح الأداة - كل عنصر: عنوان، وصف قصير يبان دايماً، وشرح كامل يبان بس لما تدوس "قراءة المزيد"
     const TOOL_GUIDE_ENTRIES = [
+        { title: '📋 نسخ كل السيجمنتات', short: 'بيسحب كل سيجمنتات التاسك (كل الصفحات) في نص واحد وينسخه، مع استبعاد التاجات زي <NOISE>.', full: 'بيدور على كل صفوف الجدول - لو فيه أزرار Navigation بيدوس عليها واحدة واحدة، ولو مفيش بيعمل سكرول لحد ما يجمع كل السيجمنتات - وبيستبعد أي صف نصه تاج بس (زي <NOISE>) لأنها مش كلام. النتيجة بتتحفظ كمان جوه الأداة (زرار "📎 نسخ الأخير") لو النسخ التلقائي فشل.' },
+        { title: '📎 نسخ الأخير', short: 'بينسخ تاني آخر نص كان مجمّع من "نسخ كل السيجمنتات" من غير ما يعيد التجميع.', full: 'مفيد لو النسخ التلقائي فشل أول مرة (المتصفح بيرفض أحياناً)، أو لو قفلت نافذة اللصق وعايز تاخد نفس النص تاني من غير ما تعيد تجميع كل الصفوف من الأول.' },
         { title: '🔍 فحص المسافات', short: 'بيدوّر على مسافات زيادة في أول/آخر السيجمنت، أو مسافة مزدوجة بين كلمتين.', full: 'بيمرّ على كل السيجمنتات (كل الصفحات) وبيجيب أي سيجمنت فيه مسافة فاضلة في البداية أو النهاية، أو مسافتين ورا بعض جوه الجملة. بيقدر يصلحهم تلقائي بضغطة واحدة من داخل نتيجة الفحص.' },
         { title: '🈯 إنجليزي/تشكيل', short: 'بيلقط السيجمنتات اللي فيها 3 كلمات إنجليزي أو أكتر، أو فيها تشكيل عربي.', full: 'التشكيل (الفتحة، الضمة، الكسرة...) مفيش مكان له في التفريغ، والسيجمنتات اللي فيها كلام إنجليزي كتير محتاجة مراجعة. الأداة بتلقط الاتنين وتقدر تشيل التشكيل تلقائي من زرار التصليح.' },
         { title: '📐 فحص القواعد', short: 'بيفحص كل سيجمنت على قواعد كتابة وإملاء محددة (فواصل، علامات، همزات، تاء مربوطة، كلمات حشو، لهجة...) ويقترح تصليح تلقائي.', full: 'ده الفحص اللي بيدقق في تفاصيل الكتابة والإملاء نفسها (زي المسافة بعد علامات الترقيم، الهمزات، التاء المربوطة، تكرار كلمات الحشو، وقواعد خاصة باللهجة اللي تختارها) - مختلف عن "🚀 مراجعة شاملة" اللي بتجمع كل أنواع الفحص مع بعض في تاب واحد.' },
+        { title: '📥 لصق النتائج', short: 'بتلصق فيه النص المصحح من جيمناي فيوزّعه على السيجمنتات بالترتيب، بعد ما يوريك مقارنة قبل/بعد.', full: 'قبل ما يلصق أي حاجة، الأداة بتوريك شاشة مقارنة (القديم بالأحمر، الجديد بالأخضر) لكل سيجمنت هيتغيّر، وبتتأكد إن عدد الأسطر اللي لصقتها مطابق لعدد الأماكن المتاحة (السيجمنتات اللي مش تاج). لو العدد مش مطابق، مش هتقدر تأكّد اللصق، وهتقولك تحديداً عند أنهي سيجمنت الاختلاف بدأ عشان تروحله على طول.' },
         { title: '⚠️ فحص التاجات', short: 'بيدقق في تناسق التاجات: تاج بدون Attribute، تاجات متتالية من نفس النوع، تاج فيه كلام، إلخ.', full: 'بيجمع كل التاجات في التاسك (كل الصفحات) ويقارن بينها: تاجات متجاورة من نفس النوع ممكن تتدمج، سيجمنت شكله تاج بس من غير Attribute متحدد، أكتر من Attribute على سيجمنت واحد، وتاجات NOISE قصيرة جداً (أقل من نص ثانية).' },
-        { title: '↩️ / ↪️ تراجع وإعادة', short: 'Ctrl+Z يرجعك خطوة، Ctrl+Y أو Ctrl+Shift+Z يعيدها. بتحسب أي تصليح تلقائي جماعي كخطوة واحدة.', full: 'كل تعديل - سواء كتابة يدوية في سيجمنت، أو تصليح تلقائي جماعي - بيتسجل كخطوة. Ctrl+Z بيرجع آخر خطوة كاملة دفعة واحدة (لو كانت تصليح 20 سيجمنت، هترجع كل الـ20 مرة واحدة مش سيجمنت سيجمنت).' },
+        { title: '↩️ / ↪️ تراجع وإعادة', short: 'Ctrl+Z يرجعك خطوة، Ctrl+Y أو Ctrl+Shift+Z يعيدها. بتحسب أي تصليح تلقائي أو لصق كخطوة واحدة.', full: 'كل تعديل - سواء كتابة يدوية في سيجمنت، أو تصليح تلقائي جماعي، أو لصق نتائج جيمناي - بيتسجل كخطوة. Ctrl+Z بيرجع آخر خطوة كاملة دفعة واحدة (لو كانت لصق 20 سيجمنت، هترجع كل الـ20 مرة واحدة مش سيجمنت سيجمنت).' },
         { title: '🩹 استرجاع نسخة', short: 'بيرجّعلك نسخة قديمة محفوظة من التاسك لو حصل خطأ كبير أو ضاع تعديلك.', full: 'الأداة بتاخد نسخ احتياطية دورية من حالة السيجمنتات وهي شغالة. الزرار ده بيوريك النسخ المتاحة وتقدر ترجع لأي واحدة منها لو حسيت إن حاجة راحت غلط.' },
         { title: '📊 إحصائية اليوم', short: 'عدد التاسكات، السيجمنتات، وزمن الكلام/التاجات اللي خلّصتهم النهاردة.', full: 'الأرقام دي بتتحدث بس لما تدوس "✅ إنهاء التاسك" في آخر كل تاسك - عشان تبقى دقيقة ومحسوبة مرة واحدة لكل تاسك، مهما عدّلت في السيجمنت نفسه عدة مرات. تقدر تصفّرها من نفس اللوحة.' },
         { title: '🚀 مراجعة شاملة', short: 'بتجمع كل أنواع الفحص (مسافات، إنجليزي/تشكيل، قواعد كتابة، تاجات) في لوحة واحدة بتابات، وبتحسب زمن الكلام والتاجات.', full: 'ده الفحص الرئيسي قبل التسليم - بيمشي على كل صفحات التاسك ويجمع كل المشاكل في مكان واحد، وبيسجّل نتيجته عشان الماركر الأحمر الصغير جوه رقم السيجمنت (⚠️) يفضل شغال لايف لحد ما تصلح كل مشكلة.' },
@@ -4649,6 +5092,8 @@
             { desc: '🚀 مراجعة شاملة', key: 'F2' },
             { desc: '✅ إنهاء التاسك', key: 'F4' },
             { desc: '⚠️ فحص التاجات', key: 'T' },
+            { desc: '📋 نسخ كل السيجمنتات', key: 'F8' },
+            { desc: '📥 فتح نافذة اللصق', key: 'F9' },
             { desc: '↩️ تراجع خطوة', key: 'Ctrl+Z' },
             { desc: '↪️ إعادة', key: 'Ctrl+Y / Ctrl+Shift+Z' },
             { desc: '📋 حافظة النصوص المتعددة', key: 'Ctrl+Shift+V / Alt+V' },
@@ -4772,10 +5217,10 @@
         document.addEventListener('keydown', escHandler);
     }
 
-    // ==================== Floating help button - glowing glass, always visible (v20.0) ====================
-    // Used to start "collapsed", almost hidden against the screen edge (opacity 0.55 + pulled off-screen with translateX) and needed
-    // two clicks to open - that made it easy to miss. Now it looks just like the timer widget: fully visible
-    // all the time with the same glow and glass level, and one click opens the help center right away.
+    // ==================== زرار المساعدة العائم - زجاجي متوهج وظاهر طول الوقت (v20.0) ====================
+    // كان بيبدأ "متطوي" شبه مخفي جوه حافة الشاشة (opacity 0.55 + مسحوب برّا الشاشة بـ translateX) ومحتاج
+    // ضغطتين عشان يفتح - ده كان يخليه صعب إنه ينلقط. دلوقتي شكله زي ودجت التايمر بالظبط: ظاهر بالكامل
+    // طول الوقت بنفس مستوى التوهج والزجاجية، وضغطة واحدة بس تفتح مركز المساعدة على طول.
     function ensureHelpButtonStyles() {
         if (document.getElementById('tx-help-btn-style')) return;
         const style = document.createElement('style');
@@ -4832,10 +5277,10 @@
         document.body.appendChild(btn);
     }
 
-    // ==================== Live task timer - very transparent + collapsible + pausable (v18.0) ====================
-    // Starts counting on its own from the moment you open the task page (and keeps running even if you refresh the same page),
-    // and resets automatically once you successfully finish "✅ finish task". You can pause it (the small ⏸ button inside) without
-    // it resetting - handy if you're taking a break - and you can collapse the whole widget into a small circle by clicking it, and expand it back the same way.
+    // ==================== تايمر التاسك الحي - شفاف جداً + قابل للطي + إيقاف مؤقت (v18.0) ====================
+    // بيبدأ يعد لوحده من ساعة ما فتحت صفحة التاسك (وبيفضل مستمر حتى لو عملت Refresh لنفس الصفحة)،
+    // وبيتصفّر تلقائي لما تخلّص "✅ إنهاء التاسك" بنجاح. تقدر توقفه مؤقتاً (زرار ⏸ الصغير جواه) من غير
+    // ما يتصفّر - مفيد لو هتاخد بريك - وتقدر تطوي الودجت كله لدايرة صغيرة بالضغط عليه، وتوسّعه تاني بنفس الطريقة.
     const TASK_TIMER_KEY = 'tx_task_timer_v1';
 
     function readTaskTimerState() {
@@ -4872,7 +5317,7 @@
     let taskTimerPausedAt = _existingTimerState ? _existingTimerState.pausedAt : null;
     if (!_existingTimerState) writeTaskTimerState();
 
-    // Called once "finish task" completes successfully - resets the counter and starts over for the next task
+    // بتتنادى لما تخلّص "إنهاء التاسك" بنجاح - بتصفّر العداد ويبدأ من جديد للتاسك الجاي
     function resetTaskTimer() {
         taskTimerStart = Date.now();
         taskTimerPausedAccumMs = 0;
@@ -5031,7 +5476,7 @@
         pauseBtn.title = 'إيقاف/استكمال العداد مؤقتاً';
         pauseBtn.onclick = (e) => { e.stopPropagation(); toggleTaskTimerPause(); };
 
-        // Clear, always-visible reset button - the "reset the timer and start over" feature is requested and available in one click
+        // زرار تصفير واضح وموجود قدامك على طول - ميزة "صفّر التايمر وابدأ من الأول" مطلوبة ومتاحة بضغطة واحدة
         const resetBtn = document.createElement('span');
         resetBtn.className = 'tx-timer-reset-btn';
         resetBtn.textContent = '🔄';
@@ -5048,7 +5493,7 @@
         widget.appendChild(resetBtn);
         document.body.appendChild(widget);
 
-        // Clicking the widget itself (not ⏸ or 🔄) expands/collapses it, for when you're not hovering with a mouse (touchscreens, for example)
+        // الضغط على الودجت نفسه (مش على ⏸ أو 🔄) بيفرده/يطويه لمن مش بتعمل هوفر بالماوس (شاشات اللمس مثلاً)
         widget.addEventListener('click', (e) => {
             if (e.target === pauseBtn || e.target === resetBtn) return;
             widget.classList.toggle('tx-expanded');
@@ -5059,11 +5504,11 @@
         setInterval(updateTaskTimerDisplay, 1000);
     }
 
-    // ==================== Break/stretch reminder ====================
-    // About every two hours of continuous work, shows a gentle, friendly (colloquial) reminder to rest your eyes or stretch
-    // for 10 minutes. The time is saved in localStorage so it keeps working even if you refresh the page.
-    // Important: the counter only counts time the tab is actually open and visible in front of you (not sitting closed in a background tab),
-    // "two hours of work" so it means two real hours, not two hours even with the tab closed next to you.
+    // ==================== منبه الإجهاد (Break / Stretch Reminder) ====================
+    // كل ساعتين شغل متواصل تقريباً، بيظهر تنبيه هادي وحلو (بالعامية) يفكّرك تريّح عينك أو تعمل Stretch
+    // لمدة 10 دقايق. الوقت محفوظ في localStorage عشان يفضل شغال حتى لو عملت Refresh للصفحة.
+    // مهم: العداد بيحسب بس الوقت اللي التاب فاتح وظاهر فعلاً قدامك (مش مقفول في تاب تاني بالخلفية)،
+    // عشان "ساعتين شغل" تبقى ساعتين شغل حقيقي مش ساعتين حتى لو سايب التاب مقفول جنب.
     const BREAK_ACTIVE_MS_KEY = 'tx_break_active_ms_v1';
     const BREAK_INTERVAL_MS = 2 * 60 * 60 * 1000; // ساعتين
 
@@ -5165,7 +5610,7 @@
     }
 
     function checkBreakReminder() {
-        // We only add this minute to the counter if the tab is actually visible to the user right now
+        // بنضيف الدقيقة دي للعداد بس لو التاب ظاهر فعلاً قدام المستخدم دلوقتي
         if (!document.hidden) {
             accumulatedActiveMs += 60000;
             saveAccumulatedActiveMs();
@@ -5177,7 +5622,7 @@
     }
     setInterval(checkBreakReminder, 60000);
 
-    // ==================== Celebration system - varied phrases + multiple random themes (v18.0) ====================
+    // ==================== نظام الاحتفال - جمل متنوعة + تيمات متعددة عشوائية (v18.0) ====================
     function ensureCelebrationStyles() {
         if (document.getElementById('tx-celebrate-style')) return;
         const style = document.createElement('style');
@@ -5255,7 +5700,7 @@
     const BALLOON_COLORS = ['#f87171', '#fbbf24', '#34d399', '#38bdf8', '#a78bfa', '#f472b6', '#fb923c'];
     const EMOJI_SET = ['🐒', '🚀', '🐱', '⭐', '👑', '🎉', '🔥', '🥳', '🦄', '🍕', '💃', '🎈'];
 
-    // Picks a random item from an array without repeating the same item that came up last time
+    // بتختار عنصر عشوائي من مصفوفة من غير ما تكرر نفس العنصر اللي طلع المرة اللي فاتت
     function pickRandomNoRepeat(pool, state) {
         if (pool.length <= 1) return pool[0];
         let idx;
@@ -5264,7 +5709,7 @@
         return pool[idx];
     }
 
-    // Big array of encouraging phrases in Egyptian colloquial - said after every "finish task"
+    // مصفوفة كبيرة من الجمل التشجيعية بالعامية المصرية - بتتقال بعد كل "إنهاء التاسك"
     const HYPE_PHRASES = [
         'يا وحش! 🔥 خلصت تاسك كمان',
         'تحفة! 🎯 استمر كده',
@@ -5299,7 +5744,7 @@
     ];
     const hypeState = { last: -1 };
 
-    // Special phrases for the moment of submitting the task (Submit) - a bit bigger/nicer than the regular finish-task phrases
+    // جمل مخصوصة لحظة تسليم التاسك (Submit) - أكبر وأحلى شوية من جمل إنهاء التاسك العادي
     const SUBMIT_HYPE_PHRASES = [
         '🏆 عاش! التاسك اتسلّم بنجاح',
         '🚀 تسليم جامد! يلا على التاسك التاني',
@@ -5342,7 +5787,7 @@
         setTimeout(() => layer.remove(), duration);
     }
 
-    // Consecutive firework sparks popping randomly across the screen
+    // شرارات نار متتالية (fireworks) بتتقفش عشوائي في الشاشة
     function launchFireworks(durationMs) {
         const duration = durationMs || 3600;
         const bursts = Math.max(2, Math.round(duration / 900));
@@ -5374,7 +5819,7 @@
         setTimeout(() => layer.remove(), bursts * 320 + 1600);
     }
 
-    // Balloons theme: colorful balloons floating up with a gentle sway
+    // تيمة البلالين: بلالين ملونة طايرة لفوق بتماوج لطيف
     function launchBalloons(durationMs) {
         const duration = durationMs || 5200;
         ensureCelebrationStyles();
@@ -5398,7 +5843,7 @@
         setTimeout(() => layer.remove(), duration);
     }
 
-    // Emoji-rain theme: cute, funny emojis falling from the top
+    // تيمة مطر الإيموجيز: إيموجيز مضحكة وحلوة نازلة من فوق
     function launchEmojiRain(durationMs) {
         const duration = durationMs || 4600;
         ensureCelebrationStyles();
@@ -5420,7 +5865,7 @@
         setTimeout(() => layer.remove(), duration);
     }
 
-    // Each theme takes the celebration duration in milliseconds and runs itself - the random pick between them happens on every celebration
+    // كل تيمة بتاخد مدة الاحتفال بالميلي ثانية وتشغّل نفسها - بيتم الاختيار العشوائي بينهم في كل احتفال
     const CELEBRATION_THEMES = [
         (d) => launchConfetti(d),
         (d) => launchFireworks(d),
@@ -5450,8 +5895,8 @@
         );
     }
 
-    // ==================== Runs a celebration once "✅ finish task" is actually confirmed (not before confirming) - random theme + random phrase, ====================
-    // and it lasts a bit longer (~8 seconds) so it doesn't disappear too fast
+    // احتفال بيتشغّل بعد ما تأكّد "✅ إنهاء التاسك" فعلاً (مش قبل التأكيد) - تيمة عشوائية + جملة عشوائية،
+    // ومدته أطول شوية (~8 ثواني) عشان ميختفيش بسرعة
     function celebrateFinishTask(tasksFinishedToday) {
         const duration = 9500;
         const theme = pickRandomNoRepeat(CELEBRATION_THEMES, themeState);
@@ -5460,7 +5905,7 @@
         showCelebrationBannerCustom(phrase, 'تاسك رقم ' + tasksFinishedToday + ' النهاردة 🚀', 8300);
     }
 
-    // A bigger, nicer celebration that runs when you press the site's own original "Submit" button - two themes together + a special phrase
+    // احتفال أكبر وأحلى بيتشغّل عند الضغط على "Submit" الأصلي بتاع الموقع - تيمتين مع بعض + جملة مخصوصة
     function celebrateSubmitTask() {
         const duration = 10500;
         let theme1 = pickRandomNoRepeat(CELEBRATION_THEMES, themeState);
@@ -5472,7 +5917,7 @@
         showCelebrationBannerCustom(phrase, 'يلا بينا على التاسك اللي بعده 💪', 9800, true);
     }
 
-    // Called every time you press the site's own original "Save" button - runs a short celebration, and reminds you if you haven't done "finish task" yet
+    // بيتنادى كل ما تدوس زرار "Save" الأصلي بتاع الموقع - بيعمل احتفال قصير، وبيفكّرك لو لسه معملتش "إنهاء التاسك"
     function celebrateTaskSave() {
         launchConfetti();
         const reminderNeeded = currentTaskTouchedSerials.size > 0;
@@ -5482,13 +5927,13 @@
         }
     }
 
-    // Watches the site's own original "Save" and "Submit" buttons (without changing their behavior) and runs the matching celebration.
-    // isAutoSaveTriggeredClick is set to true the moment auto-save itself clicks the Save button, so
-    // it doesn't trigger a celebration/confetti every 60 seconds - the celebration should stay exclusive to a real user click.
+    // بيراقب زراري "Save" و"Submit" الأصليين بتوع الموقع (من غير ما يغيّر سلوكهم) ويشغّل الاحتفال المناسب.
+    // isAutoSaveTriggeredClick بيتحط true لحظة ما الأوتو سيف نفسه يدوس على زرار Save، عشان
+    // ميعملش احتفال/كونفيتي كل 60 ثانية - الاحتفال لازم يفضل حصري لضغطة المستخدم الحقيقية.
     let isAutoSaveTriggeredClick = false;
-    // Set to true whenever any edit happens in the table that hasn't been saved yet; set back to false once a Save happens
-    // (whether you clicked it or auto-save did) - so auto-save stops clicking Save every minute if there's no
-    // new edit at all since the last save.
+    // بيتحط true لما يحصل أي تعديل جوه الجدول من غير ما يتحفظ لسه؛ بيرجع false لما تحصل ضغطة Save
+    // (سواء إنت اللي دوست أو الأوتو سيف نفسه) - عشان الأوتو سيف يبطّل يدوس Save كل دقيقة لو مفيش
+    // تعديل جديد أصلاً من آخر مرة اتحفظ، ويوفّر ريكوستات على السيرفر من غير داعي.
     let hasUnsavedChangesSinceLastSave = false;
     function hookSiteSaveButton() {
         document.addEventListener('click', (e) => {
@@ -5504,9 +5949,9 @@
         }, true);
     }
 
-    // ==================== Auto-save every 60 seconds ====================
-    // Clicks the site's own original "Save" button itself every minute, so your work stays saved on its own
-    // without you needing to remember to click it - if the power goes out or anything happens, the most you could lose is one minute of work.
+    // ==================== حفظ تلقائي كل 60 ثانية (Auto-Save) ====================
+    // بيدوس هو نفسه على زرار "Save" الأصلي بتاع الموقع كل دقيقة، عشان الشغل يفضل محفوظ لوحده
+    // من غير ما تحتاج تتذكر تدوس عليه - لو النور قطع أو حصل أي حاجة، أقصى فقدان ممكن هو دقيقة شغل بس.
     function findSiteSaveButton() {
         const candidates = Array.from(document.querySelectorAll('button, div, span, a')).filter(el => {
             if (el.classList.contains('tx-tool-btn')) return false;
@@ -5516,7 +5961,7 @@
             return el.offsetParent !== null || el.getClientRects().length > 0;
         });
         if (candidates.length === 0) return null;
-        // "Save" itself, so it mimics a real user click accurately
+        // نفضّل العنصر الأقرب لكلمة "Save" نفسها (أقل عدد عناصر جوّاه) عشان يقلّد كليك المستخدم الحقيقي بدقة
         candidates.sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length);
         return candidates[0];
     }
@@ -5535,7 +5980,7 @@
 
     setInterval(performAutoSave, 60000);
 
-    // Extra reminder: if you try to leave the page with edits not yet logged in "finish task", the browser will ask you to confirm
+    // تذكير إضافي: لو حاولت تسيب الصفحة وفيه تعديلات لسه ماتسجلتش في "إنهاء التاسك"، المتصفح هيسألك تأكيد
     window.addEventListener('beforeunload', (e) => {
         if (currentTaskTouchedSerials.size > 0) {
             e.preventDefault();
@@ -5544,10 +5989,10 @@
     });
 
     document.addEventListener('keydown', (e) => {
-        // Important note: e.key returns the "translated" character based on your keyboard language - if your keyboard is Arabic,
-        // pressing V gives you an Arabic letter, not "v", so any condition relying only on e.key will silently fail. The fix: e.code returns
-        // the physical key location itself (like 'KeyV') regardless of keyboard language, so we rely on it here (with e.key
-        // as a second line of defense for the rare old browsers that might not support e.code).
+        // ملحوظة مهمة: e.key بيرجع الحرف "المتَرجَم" حسب لغة الكيبورد بتاعتك - لو الكيبورد عربي، دوسة على
+        // زرار V هتديك حرف عربي مش "v"، فأي شرط بيقارن على e.key وحده هيفشل بصمت. الحل: e.code بيرجّع
+        // مكان الزرار الفيزيقي نفسه (زي 'KeyV') مهما كانت لغة الكيبورد، فبقينا نعتمد عليه هنا (مع e.key
+        // كخط دفاع ثاني للمتصفحات القديمة النادرة اللي ممكن ماتدعمش e.code).
         const isKey = (code, key) => e.code === code || e.key.toLowerCase() === key;
 
         if ((e.ctrlKey || e.metaKey) && !e.shiftKey && isKey('KeyZ', 'z')) {
@@ -5560,9 +6005,9 @@
             redoLastEdit();
             return;
         }
-        // Multi-clipboard feature - needs to work while you're inside the text field itself, so it's checked before the isEditing condition.
-        // Ctrl+Shift+V is the primary shortcut, Alt+V is an easy alternate with no known browser conflict
-        // (F6 was a bad choice since it takes you to Chrome's address bar, so we dropped it).
+        // حافظة النصوص المتعددة - لازم يشتغل وأنت جوه مربع الكتابة نفسه، عشان كده قبل شرط isEditing.
+        // Ctrl+Shift+V هو الأساسي، وAlt+V اختصار بديل سهل ومفيش تعارض معروف بيه في المتصفحات
+        // (F6 كان اختيار سيء لأنه بيوديك لشريط العنوان في كروم، فمتشلناهوش).
         if (((e.ctrlKey || e.metaKey) && e.shiftKey && isKey('KeyV', 'v')) || (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && isKey('KeyV', 'v'))) {
             const target = document.activeElement;
             if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
@@ -5579,6 +6024,12 @@
         if (e.key === 'F2') {
             e.preventDefault();
             if (fullReviewBtnRef) runFullReview(fullReviewBtnRef);
+        } else if (e.key === 'F8') {
+            e.preventDefault();
+            if (copyAllBtnRef) copySegments(copyAllBtnRef);
+        } else if (e.key === 'F9') {
+            e.preventDefault();
+            showPasteModal();
         } else if (e.key === 'F4') {
             e.preventDefault();
             if (finishTaskBtnRef) finishCurrentTask(finishTaskBtnRef);
@@ -5594,6 +6045,6 @@
         }
     });
 
-    // Called here (last thing in the file) to make sure all the let/const any button needs (like taskTimerStart) are already defined
+    // بينادى هنا (آخر حاجة في الملف) عشان يضمن إن كل الـ let/const اللي محتاجها أي زرار (زي taskTimerStart) بقت متعرّفة
     initButtons();
 })();

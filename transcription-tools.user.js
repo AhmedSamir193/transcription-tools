@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      17.1
+// @version      17.2
 // @match        *://*/*
 // @grant        none
 // ==/UserScript==
@@ -928,69 +928,82 @@
     }
 
     // بيشغّل كل الفحوصات مع بعض ويعرضهم في لوحة واحدة بتابات
+    // بيلمّ من كل صف ظاهر كل المعلومات اللي محتاجها الفحوصات الأربعة مرة واحدة بس (مسافات، إنجليزي/تشكيل،
+    // قواعد الكتابة، معلومات التاج) - بدل ما كل فحص يعمل querySelectorAll ويقرا الصف لوحده على حدة.
+    // ملحوظة: بنستخدم raw من غير trim لفحص المسافات (محتاج يعرف لو في مسافة أول/آخر السيجمنت)،
+    // وtrimmed (raw.trim()) للفحوصات التانية زي الأصل بالظبط.
+    function scanVisiblePageForFullReview(acc) {
+        const rows = document.querySelectorAll('#changyuliu_table > tr');
+
+        rows.forEach(row => {
+            const snap = collectRowSnapshot(row);
+            if (!snap) return;
+            const { serial, raw, trimmed, hasAttrTag, attrTagTexts, regionId } = snap;
+
+            let hasErrorLevel = false; // مسافات = 'error' زي الأصل بالظبط
+            let hasWarnLevel = false;  // إنجليزي/تشكيل/قواعد كتابة = 'warn' زي الأصل بالظبط
+
+            if (raw && /^\s|\s$/.test(raw)) { acc.allLeadTrail.add(serial); hasErrorLevel = true; }
+            if (raw && acc.doubleSpaceRegex.test(raw)) { acc.allDoubleSpace.add(serial); hasErrorLevel = true; }
+
+            if (trimmed) {
+                const englishWords = countPureEnglishWords(trimmed);
+                if (englishWords.length >= 3) {
+                    acc.allEnglishIssues.push({ serial, count: englishWords.length, words: englishWords.join(', ') });
+                    hasWarnLevel = true;
+                }
+                if (acc.tashkeelRegex.test(trimmed)) { acc.allTashkeelIssues.add(serial); hasWarnLevel = true; }
+            }
+
+            const writingIssues = checkWritingRules(trimmed, hasAttrTag);
+            if (writingIssues.length > 0) {
+                acc.allWritingResults.push({ serial, issues: writingIssues });
+                hasWarnLevel = true;
+            }
+
+            acc.tagInfo[serial] = { serial, text: trimmed, hasAttrTag, attrTagTexts, regionId };
+
+            setRowStatus(row, hasErrorLevel ? 'error' : (hasWarnLevel ? 'warn' : null));
+        });
+    }
+
     async function runFullReview(btn) {
         await pickDialect();
 
         btn.textContent = '⏳ جاري المراجعة الشاملة...';
         btn.disabled = true;
 
-        const allLeadTrail = new Set();
-        const allDoubleSpace = new Set();
-        {
-            const navButtons = findNavButtons();
-            checkWhitespaceIssues(); // نفحص المرئي حالياً كمان
-            {
-                const r0 = checkWhitespaceIssues();
-                r0.leadTrailIssues.forEach(s => allLeadTrail.add(s));
-                r0.doubleSpaceIssues.forEach(s => allDoubleSpace.add(s));
-            }
-            if (navButtons.length > 0) {
-                for (const navBtn of navButtons) {
-                    navBtn.click();
-                    await sleep(500);
-                    const result = checkWhitespaceIssues();
-                    result.leadTrailIssues.forEach(s => allLeadTrail.add(s));
-                    result.doubleSpaceIssues.forEach(s => allDoubleSpace.add(s));
-                }
+        // كانت الأداة بتعمل 4 جولات تصفّح كاملة منفصلة (مسافات، إنجليزي/تشكيل، قواعد كتابة، تاجات) -
+        // كل جولة بتدوس على كل أزرار الصفحات وتستنى 500ms في كل صفحة. دلوقتي جولة واحدة بس بتجمع
+        // كل حاجة سوا، فبدل 4×عدد الصفحات كليك بقت مرة واحدة بس × عدد الصفحات.
+        const acc = {
+            allLeadTrail: new Set(),
+            allDoubleSpace: new Set(),
+            allEnglishIssues: [],
+            allTashkeelIssues: new Set(),
+            allWritingResults: [],
+            tagInfo: {},
+            doubleSpaceRegex: /[^\s،؛:؟!.]\s{2,}[^\s،؛:؟!.]/,
+            tashkeelRegex: /[\u064B-\u0652]/
+        };
+
+        const navButtons = findNavButtons();
+        scanVisiblePageForFullReview(acc); // الصفحة الظاهرة حالياً كمان
+        if (navButtons.length > 0) {
+            for (const navBtn of navButtons) {
+                navBtn.click();
+                await sleep(500);
+                scanVisiblePageForFullReview(acc);
             }
         }
 
-        let allEnglishIssues = [];
-        const allTashkeelIssues = new Set();
-        {
-            const navButtons = findNavButtons();
-            if (navButtons.length > 0) {
-                for (const navBtn of navButtons) {
-                    navBtn.click();
-                    await sleep(500);
-                    const result = checkEnglishAndTashkeel();
-                    allEnglishIssues.push(...result.englishIssues);
-                    result.tashkeelIssues.forEach(s => allTashkeelIssues.add(s));
-                }
-            } else {
-                const result = checkEnglishAndTashkeel();
-                allEnglishIssues.push(...result.englishIssues);
-                result.tashkeelIssues.forEach(s => allTashkeelIssues.add(s));
-            }
-        }
-        allEnglishIssues = dedupeBySerial(allEnglishIssues);
+        const allLeadTrail = acc.allLeadTrail;
+        const allDoubleSpace = acc.allDoubleSpace;
+        const allTashkeelIssues = acc.allTashkeelIssues;
+        let allEnglishIssues = dedupeBySerial(acc.allEnglishIssues);
+        let allWritingResults = dedupeWritingResults(acc.allWritingResults);
 
-        let allWritingResults = [];
-        {
-            const navButtons = findNavButtons();
-            if (navButtons.length > 0) {
-                for (const navBtn of navButtons) {
-                    navBtn.click();
-                    await sleep(500);
-                    allWritingResults.push(...scanWritingRules());
-                }
-            } else {
-                allWritingResults.push(...scanWritingRules());
-            }
-        }
-        allWritingResults = dedupeWritingResults(allWritingResults);
-
-        const tagInfo = await collectAllRowInfo();
+        const tagInfo = acc.tagInfo;
         const sortedSerials = Object.keys(tagInfo).map(Number).sort((a, b) => a - b);
         const adjacentDuplicates = [];
         const missingAttrTags = [];
@@ -1002,6 +1015,10 @@
         const perTagTotals = {};
         let totalSpeechSeconds = 0, speechCount = 0;
 
+        // كان بيعمل document.querySelector منفصلة لكل سيجمنت متاج/بيه كلام (ممكن يبقوا مئات) - دلوقتي
+        // بحث واحد على كل الـregions الظاهرة وMap بيتقرا منها بدل البحث المتكرر (شوف buildRegionDurationCache)
+        const regionDurationCache = buildRegionDurationCache();
+
         for (let i = 0; i < sortedSerials.length; i++) {
             const cur = tagInfo[sortedSerials[i]];
             const isTagShaped = /^<[A-Za-z]+>$/.test(cur.text);
@@ -1009,7 +1026,7 @@
             if (isTagShaped && !cur.hasAttrTag) missingAttrTags.push(cur.serial);
             if (cur.hasAttrTag && cur.attrTagTexts.length > 1) multipleTagsPerSegment.push({ serial: cur.serial, tags: cur.attrTagTexts.join(', ') });
             if (cur.hasAttrTag && cur.attrTagTexts.includes('<NOISE>')) {
-                const duration = getRegionDuration(cur.regionId);
+                const duration = getRegionDuration(cur.regionId, regionDurationCache);
                 if (duration !== null && duration < 0.5) shortDurationTags.push({ serial: cur.serial, duration });
             }
             if (cur.hasAttrTag && cur.text && !isTagShaped) taggedWithText.push({ serial: cur.serial, text: cur.text });
@@ -1023,7 +1040,7 @@
             }
 
             if (isTagShaped && cur.hasAttrTag) {
-                const duration = getRegionDuration(cur.regionId);
+                const duration = getRegionDuration(cur.regionId, regionDurationCache);
                 if (duration !== null) {
                     totalTagSeconds += duration;
                     tagCount++;
@@ -1032,7 +1049,7 @@
             }
 
             if (!isTagShaped && !cur.hasAttrTag && cur.text) {
-                const duration = getRegionDuration(cur.regionId);
+                const duration = getRegionDuration(cur.regionId, regionDurationCache);
                 if (duration !== null) {
                     totalSpeechSeconds += duration;
                     speechCount++;
@@ -1470,22 +1487,19 @@
         const doubleSpaceRegex = /[^\s،؛:؟!.]\s{2,}[^\s،؛:؟!.]/;
 
         rows.forEach(row => {
-            const serialCell = row.querySelector('.number');
-            const contentCell = row.querySelector('.textContent .mark-content-textarea');
-            if (!serialCell || !contentCell) return;
-
-            const serial = parseInt(serialCell.textContent.trim(), 10);
-            const raw = contentCell.value !== undefined ? contentCell.value : contentCell.textContent;
+            const snap = collectRowSnapshot(row);
+            if (!snap) return;
+            const raw = snap.raw;
 
             let hasIssue = false;
 
             if (raw && /^\s|\s$/.test(raw)) {
-                leadTrailIssues.push(serial);
+                leadTrailIssues.push(snap.serial);
                 hasIssue = true;
             }
 
             if (raw && doubleSpaceRegex.test(raw)) {
-                doubleSpaceIssues.push(serial);
+                doubleSpaceIssues.push(snap.serial);
                 hasIssue = true;
             }
 
@@ -1559,21 +1573,17 @@
         const tashkeelRegex = /[\u064B-\u0652]/;
 
         rows.forEach(row => {
-            const serialCell = row.querySelector('.number');
-            const contentCell = row.querySelector('.textContent .mark-content-textarea');
-            if (!serialCell || !contentCell) return;
-
-            const serial = parseInt(serialCell.textContent.trim(), 10);
-            const raw = (contentCell.value || contentCell.textContent || '').trim();
-            if (!raw) return;
+            const snap = collectRowSnapshot(row);
+            if (!snap || !snap.trimmed) return;
+            const raw = snap.trimmed;
 
             const englishWords = countPureEnglishWords(raw);
             const hasTashkeel = tashkeelRegex.test(raw);
             const hasThreeEnglishWords = englishWords.length >= 3;
 
             if (hasThreeEnglishWords || hasTashkeel) {
-                if (hasThreeEnglishWords) englishIssues.push({ serial, count: englishWords.length, words: englishWords.join(', ') });
-                if (hasTashkeel) tashkeelIssues.push(serial);
+                if (hasThreeEnglishWords) englishIssues.push({ serial: snap.serial, count: englishWords.length, words: englishWords.join(', ') });
+                if (hasTashkeel) tashkeelIssues.push(snap.serial);
                 setRowStatus(row, 'warn');
             } else {
                 setRowStatus(row, null);
@@ -2208,18 +2218,12 @@
         const results = [];
 
         rows.forEach(row => {
-            const serialCell = row.querySelector('.number');
-            const contentCell = row.querySelector('.textContent .mark-content-textarea');
-            const attrCell = row.querySelector('.attr');
-            if (!serialCell || !contentCell) return;
+            const snap = collectRowSnapshot(row);
+            if (!snap) return;
 
-            const serial = parseInt(serialCell.textContent.trim(), 10);
-            const raw = (contentCell.value || contentCell.textContent || '').trim();
-            const hasAttrTag = attrCell ? attrCell.querySelectorAll('.p1').length > 0 : false;
-
-            const issues = checkWritingRules(raw, hasAttrTag);
+            const issues = checkWritingRules(snap.trimmed, snap.hasAttrTag);
             if (issues.length > 0) {
-                results.push({ serial, issues });
+                results.push({ serial: snap.serial, issues });
                 setRowStatus(row, 'warn');
             } else {
                 setRowStatus(row, null);
@@ -2269,7 +2273,8 @@
             const options = [
                 { id: 'مصري', label: '🇪🇬 مصري' },
                 { id: 'لبناني', label: '🇱🇧 لبناني / شامي' },
-                { id: 'تونسي', label: '🇹🇳 تونسي' }
+                { id: 'تونسي', label: '🇹🇳 تونسي' },
+                { id: 'مغربي', label: '🇲🇦 مغربي' }
             ];
 
             function cleanup(result) {
@@ -2677,22 +2682,33 @@
     }
 
     // ==================== الجزء 7: فحص تناسق التاجات ====================
-    function getRowInfo(row) {
+    // نقطة قراءة واحدة مشتركة لأي صف - بتقرا الرقم، النص (raw وtrimmed)، وبيانات التاج مرة واحدة بس.
+    // checkWhitespaceIssues وcheckEnglishAndTashkeel وscanWritingRules وgetRowInfo كانوا كل واحد فيهم
+    // بيعمل نفس استعلامات querySelector دي لوحده على كل صف - دلوقتي كلهم بياخدوا من الدالة دي.
+    // ملحوظة: raw بتتقرا بـ"value !== undefined" (مش "value || textContent") عشان لو السيجمنت اتمسح
+    // كله يرجع فاضي فعلاً، مش يرجع النص القديم من textContent (اللي بيفضل ثابت من أول ما الصفحة اتحمّلت).
+    function collectRowSnapshot(row) {
         const serialCell = row.querySelector('.number');
-        const textarea = row.querySelector('.textContent .mark-content-textarea');
+        const contentCell = row.querySelector('.textContent .mark-content-textarea');
         const attrCell = row.querySelector('.attr');
-        if (!serialCell || !textarea) return null;
+        if (!serialCell || !contentCell) return null;
 
         const serial = parseInt(serialCell.textContent.trim(), 10);
         if (isNaN(serial)) return null;
 
-        const text = (textarea.value || textarea.textContent || '').trim();
+        const raw = contentCell.value !== undefined ? contentCell.value : contentCell.textContent;
+        const trimmed = (raw || '').trim();
         const attrPills = attrCell ? Array.from(attrCell.querySelectorAll('.p1')) : [];
         const hasAttrTag = attrPills.length > 0;
         const attrTagTexts = attrPills.map(el => (el.getAttribute('title') || el.textContent || '').trim());
-        const regionId = row.id;
 
-        return { serial, text, hasAttrTag, attrTagTexts, regionId };
+        return { row, serial, raw, trimmed, hasAttrTag, attrTagTexts, regionId: row.id };
+    }
+
+    function getRowInfo(row) {
+        const snap = collectRowSnapshot(row);
+        if (!snap) return null;
+        return { serial: snap.serial, text: snap.trimmed, hasAttrTag: snap.hasAttrTag, attrTagTexts: snap.attrTagTexts, regionId: snap.regionId };
     }
 
     async function collectAllRowInfo() {
@@ -2743,7 +2759,11 @@
         return allInfo;
     }
 
-    function getRegionDuration(regionId) {
+    // بيدوّر على مدة تاج واحد. لو اتديله cache (Map جاهزة من buildRegionDurationCache) بيرجع منها فورًا
+    // (O(1))، ولو من غيرها بيرجع لسلوكه الأصلي (بحث مباشر في الـDOM) - عشان أماكن زي "فحص QA" اللي
+    // بتحتاج تقرا القيمة اللحظية بعد ما تتنقل لصف معين (locateRowBySerial) لازم تفضل بتقرا مباشر.
+    function getRegionDuration(regionId, cache) {
+        if (cache) return cache.has(regionId) ? cache.get(regionId) : null;
         const region = document.querySelector('region.wavesurfer-region[data-id="' + regionId + '"]');
         if (!region) return null;
         try {
@@ -2753,6 +2773,24 @@
         } catch (e) {
             return null;
         }
+    }
+
+    // بدل ما نعمل document.querySelector منفصل لكل تاج/سيجمنت في اللوب (كان بيحصل مرة لكل سيجمنت متاج -
+    // ممكن يبقوا مئات في تاسك واحد)، بنعمل querySelectorAll واحدة بس لكل عناصر الـregion الظاهرة حالياً
+    // ونبني منها Map: regionId → المدة بالثانية. أي لوب بيحسب مدة كذا تاج/سيجمنت في نفس اللحظة (من غير
+    // تنقل بين الصفحات وسط اللوب) يقدر يستخدم الـcache ده بدل ما يبحث في الـDOM كل مرة.
+    function buildRegionDurationCache() {
+        const cache = new Map();
+        document.querySelectorAll('region.wavesurfer-region').forEach(region => {
+            const id = region.getAttribute('data-id');
+            if (!id) return;
+            try {
+                const dataTime = JSON.parse(region.getAttribute('data-time'));
+                const seconds = parseFloat(dataTime.all);
+                if (!isNaN(seconds)) cache.set(id, seconds);
+            } catch (e) { /* تجاهل */ }
+        });
+        return cache;
     }
 
     // ==================== الذهاب المباشر لسيجمنت من داخل لوحة النتائج (v11.0) ====================
@@ -3162,6 +3200,9 @@
         const multipleTagsPerSegment = [];
         const taggedWithText = [];
 
+        // بحث واحد على كل الـregions الظاهرة بدل querySelector منفصل لكل تاج NOISE (شوف buildRegionDurationCache)
+        const regionDurationCache = buildRegionDurationCache();
+
         for (let i = 0; i < sortedSerials.length; i++) {
             const cur = allInfo[sortedSerials[i]];
             const isTagShaped = /^<[A-Za-z]+>$/.test(cur.text);
@@ -3175,7 +3216,7 @@
             }
 
             if (cur.hasAttrTag && cur.attrTagTexts.includes('<NOISE>')) {
-                const duration = getRegionDuration(cur.regionId);
+                const duration = getRegionDuration(cur.regionId, regionDurationCache);
                 if (duration !== null && duration < 0.5) {
                     shortDurationTags.push({ serial: cur.serial, duration });
                 }
@@ -3484,7 +3525,24 @@
         return true;
     }
 
-    setInterval(() => { initEditTracking(); }, 800);
+    // كان فيه setInterval بيعيد نداء initEditTracking() كل 800ms طول عمر الصفحة (polling مستمر) عشان
+    // لو الموقع بدّل عنصر الجدول (زي وقت التنقل بين الصفحات) الليسنرز القديمة تتربط تاني على الجدول الجديد.
+    // بدّلناه بـMutationObserver - نفس النمط المستخدم فعلاً في مراقبة العلامة المائية فوق - بيتصرف بس
+    // لما حاجة فعلاً تتغيّر في الصفحة (Debounce 150ms) بدل ما يشتغل كل 800ms سواء اتغيّر حاجة أو لأ.
+    let editTrackScanQueued = false;
+    function queueEditTrackScan(mutations) {
+        if (editTrackScanQueued) return;
+        if (mutations.every(isMutationFromOwnUI)) return;
+        editTrackScanQueued = true;
+        setTimeout(() => { editTrackScanQueued = false; initEditTracking(); }, 150);
+    }
+    function startEditTrackingObserver() {
+        if (!document.body) { setTimeout(startEditTrackingObserver, 200); return; }
+        initEditTracking(); // محاولة فورية لو الجدول موجود من الأول
+        const observer = new MutationObserver(queueEditTrackScan);
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+    startEditTrackingObserver();
 
     // ==================== الجزء 9: الحفظ الاحتياطي التلقائي (Auto-Recovery Backup) (v11.0) ====================
     const BACKUP_KEY = 'tx_auto_backup_v1';
@@ -3602,16 +3660,19 @@
         let totalTagSeconds = 0, tagCount = 0;
         let totalSpeechSeconds = 0, speechCount = 0;
 
+        // بحث واحد على كل الـregions الظاهرة بدل querySelector منفصل لكل سيجمنت (شوف buildRegionDurationCache)
+        const regionDurationCache = buildRegionDurationCache();
+
         sortedSerials.forEach(s => {
             const cur = allInfo[s];
             const isTagShaped = /^<[A-Za-z]+>$/.test(cur.text);
 
             if (isTagShaped && cur.hasAttrTag) {
-                const d = getRegionDuration(cur.regionId);
+                const d = getRegionDuration(cur.regionId, regionDurationCache);
                 if (d !== null) { totalTagSeconds += d; tagCount++; }
             }
             if (!isTagShaped && !cur.hasAttrTag && cur.text) {
-                const d = getRegionDuration(cur.regionId);
+                const d = getRegionDuration(cur.regionId, regionDurationCache);
                 if (d !== null) { totalSpeechSeconds += d; speechCount++; }
             }
         });
@@ -4071,7 +4132,7 @@
         if (text.includes('همزة')) return { key: 'hamza', label: '🔤 إملاء الهمزة' };
         if (text.includes('تاء مربوطة') || text.includes(' هاء')) return { key: 'ta_ha', label: '🔤 التاء المربوطة/الهاء' };
         if (text.includes('ياء') || text.includes('ألف مقصورة')) return { key: 'ya_alef', label: '🔤 الياء/الألف المقصورة' };
-        if (text.includes('🇹🇳') || text.includes('لهجة')) return { key: 'dialect', label: '🗣️ كلمات اللهجة (فرنسي دارج/لبناني/تونسي)' };
+        if (text.includes('🇹🇳') || text.includes('🇲🇦') || text.includes('لهجة')) return { key: 'dialect', label: '🗣️ كلمات اللهجة (فرنسي دارج/لبناني/تونسي/مغربي)' };
         if (text.includes('كلمة إنجليزية') || text.includes('تتكتب عربي') || text.includes('حالة الأحرف')) return { key: 'english_words', label: '🔤 كلمات إنجليزية مكتوبة غلط' };
         if (text.includes('#️⃣') || text.includes('هاشتاج') || text.includes('فيلر')) return { key: 'filler', label: '#️⃣ الفيلر وردز/الهاشتاجات' };
         if (text.includes('صيغة %') || text.includes('رقم مدوّر') || text.includes('أرقام هندية')) return { key: 'numbers', label: '🔢 الأرقام/النسب المئوية' };

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      17.0
+// @version      17.1
 // @match        *://*/*
 // @grant        none
 // ==/UserScript==
@@ -1646,7 +1646,7 @@
 
     // ==================== الجزء 4.6: فحص القواعد (قواعد الكتابة + الإملاء الشائع) ====================
     // اللهجة الحالية المختارة (بيتم اختيارها من مودال "اختار اللهجة" قبل أي فحص) - الافتراضي مصري
-    let currentDialect = 'مصري'; // مصري | لبناني | تونسي
+    let currentDialect = 'مصري'; // مصري | لبناني | تونسي | مغربي
 
     const allowedArabicEnglish = ['اوكي', 'أوكي', 'جيم', 'انستجرام', 'إنستجرام', 'يوتيوب', 'فيسبوك', 'تويتر', 'كمبيوتر', 'تاكسي', 'سوفنير', 'جيجا', 'كاريزما', 'اوتوبيس', 'تليفون'];
     const blacklistArabicEnglish = { 'هوسبيتال': 'hospital', 'سكول': 'school', 'مول': 'mall', 'بوليش': 'polish', 'واتساب': 'whatsapp', 'ماركت': 'market' };
@@ -1800,6 +1800,51 @@
     const TUNISIAN_SPELLING_KEYS_SORTED = Object.keys(TUNISIAN_SPELLING_CORRECTIONS)
         .sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length || b.length - a.length);
 
+    // ==================== اللهجة المغربية (V6.2) ====================
+    // كلمات فرنسي دارجة في اللهجة المغربية (لو مكتوبة عربي، تتحول فرنسي) - بتتفعّل بس لو اللهجة المختارة "مغربي"
+    // ⚠️ نفس منطق TUNISIAN_FRENCH_MAP بالظبط، لكن في خريطة منفصلة لأن التأثير الفرنسي في المغربية أعلى وأكتر تكراراً
+    // من التونسي (زي ما جه في الريدمي)، ولازم اللهجتين يفضلوا منفصلين عشان ما نخلطش مفردات مغربي بتونسي أو العكس.
+    // ملحوظة: "أوكي"/"مرسي" مستثناة عمداً (زي التونسي بالظبط) لأنها معرّبة تماماً وشائعة الكتابة بالعربي.
+    const MOROCCAN_FRENCH_MAP = {
+        // تعبيرات يومية أساسية
+        'ديجا': 'Déjà', 'دونك': 'Donc', 'نورمالمون': 'Normalement', 'باردون': 'Pardon', 'توجور': 'Toujours',
+        'بارسكو': 'Parce que', 'كوم سا': 'Comme ça', 'كوم سي كوم سا': 'Comme ci comme ça', 'سينون': 'Sinon',
+        'اكزكتمون': 'Exactement', 'كون ميم': 'Quand même', 'فرانشمون': 'Franchement', 'بريف': 'Bref',
+        'اليه': 'Allez', 'ديركت': 'Direct', 'بيان سور': 'Bien sûr', 'دكور': "D'accord",
+        'شيك': 'Chic', 'بورتابل': 'Portable', 'تليفون': 'Téléphone', 'شوماج': 'Chômage', 'كويزين': 'Cuisine',
+        'فاكانس': 'Vacances',
+        // تحيات وكلام كاجوال
+        'سالو': 'Salut', 'بونجور': 'Bonjour', 'بونسوار': 'Bonsoir', 'اوروفوار': 'Au revoir', 'بوتيت': 'Peut-être',
+        'اكسكوزموا': 'Excuse-moi', 'سيفوبليه': 'S\'il vous plaît',
+        // مشاكل وحلول وعمل
+        'بروبلام': 'Problème', 'سوليسيون': 'Solution', 'اطونسيون': 'Attention', 'كونتيني': 'Continue',
+        'ستوب': 'Stop', 'رونديفو': 'Rendez-vous', 'ويكاند': 'Week-end', 'ريونيون': 'Réunion',
+        'بروجي': 'Projet', 'بيدجي': 'Budget', 'كوليغ': 'Collègue', 'باترون': 'Patron', 'ديركتور': 'Directeur',
+        'مينيستير': 'Ministère', 'سالير': 'Salaire', 'فاكتور': 'Facture', 'ابيل': 'Appel', 'ريزو': 'Réseau',
+        'ميساج': 'Message',
+        // أكل وأماكن ومواصلات
+        'ساندويتش': 'Sandwich', 'ريستورون': 'Restaurant', 'امبيانس': 'Ambiance', 'فاتيجيه': 'Fatigué',
+        'شانس': 'Chance', 'ترافاي': 'Travail', 'بيرو': 'Bureau', 'نيميرو': 'Numéro', 'ادريس': 'Adresse',
+        'كارت': 'Carte', 'بونك': 'Banque', 'دوكتور': 'Docteur', 'فارماسي': 'Pharmacie', 'اوبيتال': 'Hôpital',
+        'انترنيت': 'Internet', 'ويفي': 'Wifi', 'اورديناتور': 'Ordinateur', 'فريجو': 'Frigo', 'دوش': 'Douche',
+        'اسانسير': 'Ascenseur', 'باركينج': 'Parking', 'تروتوار': 'Trottoir', 'كارتيه': 'Quartier',
+        'كارفور': 'Carrefour', 'مارشي': 'Marché', 'فيزا': 'Visa', 'باسبور': 'Passeport', 'اسورانس': 'Assurance',
+        'برمي': 'Permis',
+        // صفات ومصطلحات عامة شائعة
+        'فاسيل': 'Facile', 'ديفيسيل': 'Difficile', 'امبورتون': 'Important', 'نيسيسير': 'Nécessaire',
+        'بوسيبل': 'Possible', 'ابسولمون': 'Absolument', 'جينيرالمون': 'Généralement', 'سبيسيالمون': 'Spécialement'
+    };
+
+    // تصحيحات إملائية خاصة باللهجة المغربية (فصل أدوات استفهام ملتصقة غلط، نفي مدمج) - بنفس منطق التونسي بالظبط
+    // بنفصلها في خريطة لوحدها (مش MOROCCAN_FRENCH_MAP) لأنها تصحيح عربي↔عربي مش تحويل لفرنسي
+    const MOROCCAN_SPELLING_CORRECTIONS = {
+        'عل اش': 'علاش', 'على اش': 'علاش', 'كيف اش': 'كيفاش', 'فوق اش': 'فوقاش',
+        'ش حال': 'شحال', 'شي حال': 'شحال', 'ما كاينش': 'ماكاينش', 'ما بغيتش': 'مابغيتش'
+    };
+    // بنرتبهم من الأطول (بعدد الكلمات) للأقصر، عشان لو فيه تعبيرين متداخلين نتأكد إن الأطول (الأدق) يتلقط الأول
+    const MOROCCAN_SPELLING_KEYS_SORTED = Object.keys(MOROCCAN_SPELLING_CORRECTIONS)
+        .sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length || b.length - a.length);
+
     // كلمات خاصة باللهجة اللبنانية/الشامية - بتاخد الأولوية على الخريطة العامة (شيء ⬅️ شي، مثل ⬅️ متل)
     const LEBANESE_WORD_OVERRIDES = { 'شيء': 'شي', 'مثل': 'متل' };
     // لاحقة الجمع "ـهم" باللبناني بتتكتب "ـهن" (معهم ⬅️ معهن، كلهم ⬅️ كلهن) - بنطبقها على أي كلمة منتهية بـ"هم" مسبوقة بحرف عربي واحد ع الأقل
@@ -1910,6 +1955,15 @@
                 const re = new RegExp('(^|\\s)' + wrong.replace(/\s+/g, '\\s+') + '(?=\\s|$)');
                 if (re.test(raw)) issues.push('🇹🇳 إملاء تونسي غلط: "' + wrong + '" — المفروض: ' + TUNISIAN_SPELLING_CORRECTIONS[wrong]);
             });
+        } else if (currentDialect === 'مغربي') {
+            Object.keys(MOROCCAN_FRENCH_MAP).forEach(wrong => {
+                const re = new RegExp('(^|\\s)' + wrong.replace(/\s+/g, '\\s+') + '(?=\\s|$)');
+                if (re.test(raw)) issues.push('🇲🇦 كلمة فرنسي دارجة مكتوبة عربي: "' + wrong + '" — المفروض: ' + MOROCCAN_FRENCH_MAP[wrong]);
+            });
+            MOROCCAN_SPELLING_KEYS_SORTED.forEach(wrong => {
+                const re = new RegExp('(^|\\s)' + wrong.replace(/\s+/g, '\\s+') + '(?=\\s|$)');
+                if (re.test(raw)) issues.push('🇲🇦 إملاء مغربي غلط: "' + wrong + '" — المفروض: ' + MOROCCAN_SPELLING_CORRECTIONS[wrong]);
+            });
         }
         return issues;
     }
@@ -1928,6 +1982,15 @@
             Object.keys(TUNISIAN_FRENCH_MAP).forEach(wrong => {
                 const re = new RegExp('(^|\\s)' + wrong.replace(/\s+/g, '\\s+') + '(?=\\s|$)', 'g');
                 fixed = fixed.replace(re, '$1' + TUNISIAN_FRENCH_MAP[wrong]);
+            });
+        } else if (currentDialect === 'مغربي') {
+            MOROCCAN_SPELLING_KEYS_SORTED.forEach(wrong => {
+                const re = new RegExp('(^|\\s)' + wrong.replace(/\s+/g, '\\s+') + '(?=\\s|$)', 'g');
+                fixed = fixed.replace(re, '$1' + MOROCCAN_SPELLING_CORRECTIONS[wrong]);
+            });
+            Object.keys(MOROCCAN_FRENCH_MAP).forEach(wrong => {
+                const re = new RegExp('(^|\\s)' + wrong.replace(/\s+/g, '\\s+') + '(?=\\s|$)', 'g');
+                fixed = fixed.replace(re, '$1' + MOROCCAN_FRENCH_MAP[wrong]);
             });
         }
         return fixed;

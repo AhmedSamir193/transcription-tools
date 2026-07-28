@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      17.2
+// @version      17.3
 // @match        *://*/*
 // @grant        none
 // ==/UserScript==
@@ -3584,6 +3584,20 @@
         }
         const ageMinutes = Math.max(0, Math.round((Date.now() - backup.timestamp) / 60000));
         const count = Object.keys(backup.data).length;
+
+        // مهم: النسخة الاحتياطية دي متخزنة على مستوى الموقع كله مش على مستوى التاسك، فلازم نتأكد
+        // إن الـurl المحفوظ وقت أخد النسخة هو نفس صفحة التاسك اللي إنت فاتحها دلوقتي - غير كده ممكن
+        // نرجّعلك سيجمنتات تاسك تاني تمامًا (بنفس أرقام التسلسل) فوق سيجمنتات التاسك الحالي غلط.
+        if (backup.url && backup.url !== location.href) {
+            const confirmedAnyway = await showGlassConfirm(
+                '⚠️ النسخة الاحتياطية دي من تاسك تاني مختلف عن اللي إنت فاتحه دلوقتي (عمرها حوالي ' + ageMinutes + ' دقيقة). ' +
+                'لو استرجعتها هيتكتب فوق سيجمنتات التاسك الحالي بنص تاسك تاني بالغلط. ' +
+                'متكملش إلا لو متأكد إنك محتاج تحديدًا النسخة دي.',
+                { okLabel: 'استرجاع رغم كده', cancelLabel: 'إلغاء' }
+            );
+            if (!confirmedAnyway) return;
+        }
+
         const confirmed = await showGlassConfirm('هيتم استرجاع ' + count + ' سيجمنت من نسخة احتياطية عمرها حوالي ' + ageMinutes + ' دقيقة، وهيتكتب فوق أي تعديل حالي في نفس السيجمنتات. تكمل؟');
         if (!confirmed) return;
 

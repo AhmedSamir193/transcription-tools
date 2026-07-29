@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      17.3
+// @version      17.4
 // @match        *://*/*
 // @grant        none
 // ==/UserScript==
@@ -727,7 +727,12 @@
     }
 
     // tabs: [{ id, label, sections, emptyMessage, fixAction, excludeFromTotal }]
-    function showReviewPanel(tabs) {
+    // options.combinedFixAction (اختياري): لو موجودة، زرار "تصليح الكل" هيندهلها هي بس مرة واحدة بدل
+    // ما يلف على كل تاب على حدة وينده fixAction بتاعه - كل fixAction فيهم بيعمل جولة تصفّح كاملة لوحده
+    // (زي مسافات + تشكيل + قواعد كتابة)، فلو اتنادوا التلاتة كل واحد لوحده بيبقى 3 جولات تصفّح كاملة
+    // بدل واحدة. استخدمها لما عندك أكتر من fixAction حقيقي في نفس اللوحة (زي "🚀 مراجعة شاملة").
+    function showReviewPanel(tabs, options) {
+        options = options || {};
         ensurePanelStyles();
         ensureReviewStyles();
 
@@ -753,7 +758,7 @@
         actionsDiv.className = 'tx-panel-actions';
 
         let fixAllBtn = null;
-        if (totalAll > 0 && tabs.some(t => typeof t.fixAction === 'function')) {
+        if (totalAll > 0 && (tabs.some(t => typeof t.fixAction === 'function') || typeof options.combinedFixAction === 'function')) {
             fixAllBtn = document.createElement('button');
             fixAllBtn.className = 'tx-panel-btn fix';
             fixAllBtn.textContent = '🔧 تصليح الكل';
@@ -851,12 +856,21 @@
                 fixAllBtn.textContent = '⏳ جاري تصليح كل حاجة...';
                 let totalFixed = 0;
                 await runBatchOperation('fix-all', async () => {
-                    for (const tab of tabs) {
-                        if (typeof tab.fixAction === 'function') {
-                            try {
-                                totalFixed += (await tab.fixAction()) || 0;
-                            } catch (err) {
-                                console.error('[Review Fix] خطأ في ' + tab.id + ':', err);
+                    if (typeof options.combinedFixAction === 'function') {
+                        // جولة تصفّح واحدة بس بتطبّق كل الفيكسات مع بعض (بدل جولة منفصلة لكل تاب)
+                        try {
+                            totalFixed += (await options.combinedFixAction()) || 0;
+                        } catch (err) {
+                            console.error('[Review Fix] خطأ في التصليح المجمّع:', err);
+                        }
+                    } else {
+                        for (const tab of tabs) {
+                            if (typeof tab.fixAction === 'function') {
+                                try {
+                                    totalFixed += (await tab.fixAction()) || 0;
+                                } catch (err) {
+                                    console.error('[Review Fix] خطأ في ' + tab.id + ':', err);
+                                }
                             }
                         }
                     }
@@ -1100,6 +1114,25 @@
         if (multipleTagsPerSegment.length > 0) tagSections.push({ heading: '🔢 سيجمنتات فيها أكتر من تاج واحد', items: multipleTagsPerSegment.map(item => ({ text: 'سيجمنت ' + item.serial + ' (' + item.tags + ')', type: 'warn' })) });
         if (taggedWithText.length > 0) tagSections.push({ heading: '📝 سيجمنتات فيها تاج + جملة كلام مع بعض', items: taggedWithText.map(item => ({ text: 'سيجمنت ' + item.serial, type: 'warn' })) });
 
+        // كان زرار "تصليح الكل" بينده على 3 fixAction منفصلة (مسافات، تشكيل، قواعد كتابة)، وكل واحدة فيهم
+        // بتعمل جولة تصفّح كاملة لوحدها (fixSegmentsBySerial) - يعني 3 جولات صفحات كاملة لتصليح واحد.
+        // هنا بنجمعهم في fixAction واحد بيعمل جولة تصفّح واحدة بس، وكل سيجمنت بياخد بس الفيكسات المناسبة له.
+        const whitespaceFixSerials = new Set([...allLeadTrail, ...allDoubleSpace]);
+        const tashkeelFixSerials = allTashkeelIssues;
+        const writingFixSerials = new Set(allWritingResults.map(r => r.serial));
+        const combinedFixAction = (whitespaceFixSerials.size > 0 || tashkeelFixSerials.size > 0 || writingFixSerials.size > 0)
+            ? async () => {
+                const combinedSerials = new Set([...whitespaceFixSerials, ...tashkeelFixSerials, ...writingFixSerials]);
+                return await fixSegmentsBySerial(combinedSerials, (raw, serial) => {
+                    let fixed = raw;
+                    if (whitespaceFixSerials.has(serial)) fixed = fixed.trim().replace(/\s{2,}/g, ' ');
+                    if (tashkeelFixSerials.has(serial)) fixed = fixed.replace(/[\u064B-\u0652]/g, '');
+                    if (writingFixSerials.has(serial)) fixed = autoFixWritingIssues(fixed);
+                    return fixed;
+                });
+            }
+            : null;
+
         const tabs = [
             { id: 'overview', label: '📊 نظرة عامة', sections: overviewSections, emptyMessage: 'لا يوجد بيانات', excludeFromTotal: true, fixAction: null },
             {
@@ -1130,7 +1163,7 @@
 
         setReviewProblemData(computeProblemDataFromTabs(tabs));
         cacheReviewTabs(tabs);
-        showReviewPanel(tabs);
+        showReviewPanel(tabs, { combinedFixAction });
 
         // تذكير دايم: أي "فحص شامل" معناه إنك بتقرب تسلّم، فلازم متنساش تسجّل التاسك في الإحصائية
         setTimeout(() => showToast('متنساش: لما تخلّص التصليح وتقرب تسلّم، دوس ✅ إنهاء التاسك أو F4 عشان يتسجل في إحصائية اليوم 📊', false, 7000), 600);
@@ -1677,7 +1710,7 @@
 
     // خرائط الإملاء العامة (همزات + تاء مربوطة/هاء + ألف مقصورة + كلمات شائعة ملتصقة/مفصولة)
     // دي بتتطبق على كل اللهجات - إلا الكلمات اللي ليها استثناء خاص باللهجة (زي "شيء" و"مثل" باللبناني) وبيتم استثناؤها تلقائي أدناه
-    // ⚠️ ملحوظة: "علي ⬅️ على" ممكن يتلخبط مع اسم علم (اسم شخص "علي")، فراجع أي تصليح عليها بعينك
+    // ⚠️ ملحوظة: "علي ⬅️ على" كانت هنا وشيلناها عمداً لأنها بتتلخبط مع اسم علم (اسم شخص "علي")
     const HAMZA_SPELLING_MAP = {
         'الى': 'إلى', 'الا': 'إلا', 'ان': 'إن', 'ابراهيم': 'إبراهيم', 'احمد': 'أحمد', 'افضل': 'أفضل',
         'اكل': 'أكل', 'اسلام': 'إسلام', 'اخر': 'آخر', 'امن': 'آمن', 'اسيا': 'آسيا',
@@ -1717,7 +1750,7 @@
         'مباراه': 'مباراة', 'بطوله': 'بطولة', 'كوره': 'كورة', 'زياده': 'زيادة', 'نهايه': 'نهاية',
         'بدايه': 'بداية', 'اجازة': 'إجازة', 'عطله': 'عطلة', 'اللة': 'الله', 'واللة': 'والله', 'باللة': 'بالله',
         'وجة': 'وجه', 'افواة': 'أفواه', 'أشباة': 'أشباه', 'متشابة': 'متشابه', 'اخرى': 'أخرى',
-        'علي': 'على', 'إلي': 'إلى', 'حتي': 'حتى', 'متي': 'متى', 'موسي': 'موسى', 'عيسي': 'عيسى',
+        'إلي': 'إلى', 'حتي': 'حتى', 'متي': 'متى', 'موسي': 'موسى', 'عيسي': 'عيسى',
         'مستوي': 'مستوى', 'مستشفي': 'مستشفى', 'ذكري': 'ذكرى', 'شكوي': 'شكوى', 'مرضي': 'مرضى',
         'جرحي': 'جرحى', 'قتلي': 'قتلى', 'اسري': 'أسرى', 'دعوي': 'دعوى', 'اقصي': 'أقصى',
         'ادني': 'أدنى', 'اعلي': 'أعلى'
@@ -2040,11 +2073,14 @@
         });
 
         if (/(?:في|و)\s+\d/.test(raw)) issues.push('📏 مسافة بين حرف جر/واو والرقم');
-        if (/ال\s+\d/.test(raw)) issues.push('📏 مسافة بين "ال" والرقم');
-        if (/ال\s+[A-Za-z]/.test(raw)) issues.push('📏 مسافة بين "ال" وكلمة إنجليزية');
-        if (/ب\s+\d/.test(raw)) issues.push('📏 مسافة بين "ب" والرقم');
-        if (/لل\s+\d/.test(raw)) issues.push('📏 مسافة بين "لل" والرقم');
-        if (/هال\s+[\u0621-\u064A]/.test(raw)) issues.push('📏 مسافة بين "هال" والكلمة اللي بعدها');
+        // ⚠️ لازم نتأكد إن "ال"/"ب"/"لل"/"هال" دي فعلاً بادئة كلمة مستقلة، مش آخر حروف كلمة تانية
+        // (زي "ديال" المغربية أو "بحال" - آخرها "ال"، ومش أداة تعريف منفصلة محتاجة تتلزق).
+        // بنستخدم negative lookbehind: "ال"/"ب"/"لل"/"هال" ميبقاش مسبوق بحرف عربي (يعني لازم يبقى أول الكلام أو بعد مسافة/علامة ترقيم)
+        if (/(?<![\u0621-\u064A])ال\s+\d/.test(raw)) issues.push('📏 مسافة بين "ال" والرقم');
+        if (/(?<![\u0621-\u064A])ال\s+[A-Za-z]/.test(raw)) issues.push('📏 مسافة بين "ال" وكلمة إنجليزية');
+        if (/(?<![\u0621-\u064A])ب\s+\d/.test(raw)) issues.push('📏 مسافة بين "ب" والرقم');
+        if (/(?<![\u0621-\u064A])لل\s+\d/.test(raw)) issues.push('📏 مسافة بين "لل" والرقم');
+        if (/(?<![\u0621-\u064A])هال\s+[\u0621-\u064A]/.test(raw)) issues.push('📏 مسافة بين "هال" والكلمة اللي بعدها');
         if (/\d\s+كيلوغرام(?=\s|$)/.test(raw)) issues.push('📐 "كيلوغرام" بعد رقم لازم تختصر لـ كغ');
         if (/\d\s+متر(?=\s|$)(?!\s*مكعب)/.test(raw)) issues.push('📐 "متر" بعد رقم لازم تختصر لـ م');
         if (/\d\s+لتر(?=\s|$)/.test(raw)) issues.push('📐 "لتر" بعد رقم لازم تختصر لـ ل');
@@ -2065,6 +2101,14 @@
             const formatted = formatArabicRoundNumber(n);
             if (formatted) issues.push('🔢 "' + tok + '" رقم مدوّر لازم يتكتب "' + formatted + '"');
         });
+
+        // حد أقصى لطول السيجمنت (121 حرف) - نبدأ ننبّه بدري من 116 عشان ياخد باله يقسّم الجملة قبل ما يوصل للحد
+        const rawLen = raw.length;
+        if (rawLen > 121) {
+            issues.push('🚨 السيجمنت طوله ' + rawLen + ' حرف — زاد عن الحد الأقصى (121 حرف)، لازم يتقسّم');
+        } else if (rawLen >= 116) {
+            issues.push('⚠️ السيجمنت طوله ' + rawLen + ' حرف — قرّب من الحد الأقصى (121 حرف)، يفضّل تقلّله شوية');
+        }
 
         const words = raw.split(/[\s،.؟]+/).filter(w => w.length > 0);
         const dialectExcluded = dialectExcludedGeneralWords();
@@ -2128,11 +2172,11 @@
         fixed = fixed.replace(/(\d+)\s*[%％]/g, '$1%');
 
         fixed = fixed.replace(/(في|و)\s+(\d)/g, '$1$2');
-        fixed = fixed.replace(/ال\s+(\d)/g, 'ال$1');
-        fixed = fixed.replace(/ال\s+([A-Za-z])/g, 'ال$1');
-        fixed = fixed.replace(/ب\s+(\d)/g, 'ب$1');
-        fixed = fixed.replace(/لل\s+(\d)/g, 'لل$1');
-        fixed = fixed.replace(/هال\s+([\u0621-\u064A])/g, 'هال$1');
+        fixed = fixed.replace(/(?<![\u0621-\u064A])ال\s+(\d)/g, 'ال$1');
+        fixed = fixed.replace(/(?<![\u0621-\u064A])ال\s+([A-Za-z])/g, 'ال$1');
+        fixed = fixed.replace(/(?<![\u0621-\u064A])ب\s+(\d)/g, 'ب$1');
+        fixed = fixed.replace(/(?<![\u0621-\u064A])لل\s+(\d)/g, 'لل$1');
+        fixed = fixed.replace(/(?<![\u0621-\u064A])هال\s+([\u0621-\u064A])/g, 'هال$1');
 
         fixed = fixed.replace(/(\d)\s+كيلوغرام(?=\s|$)/g, '$1 كغ');
         fixed = fixed.replace(/(\d)\s+متر(?=\s|$)(?!\s*مكعب)/g, '$1 م');
@@ -2247,6 +2291,11 @@
             }
             .tx-dialect-btn:hover { background:rgba(124,58,237,0.25); border-color:rgba(124,58,237,0.5); }
             .tx-dialect-btn.selected { background:rgba(16,185,129,0.22); border-color:rgba(16,185,129,0.55); }
+            .tx-dialect-btn.keyboard-focused { outline:2px solid rgba(124,58,237,0.9); outline-offset:2px; }
+            .tx-dialect-hint {
+                font-family:'Cairo','Segoe UI',Tahoma,sans-serif; font-size:12px; color:#94a3b8;
+                text-align:center; margin-top:2px;
+            }
         `;
         document.head.appendChild(style);
     }
@@ -2277,28 +2326,58 @@
                 { id: 'مغربي', label: '🇲🇦 مغربي' }
             ];
 
+            const buttons = [];
+            let focusedIndex = Math.max(0, options.findIndex(o => o.id === currentDialect));
+
+            function updateFocusHighlight() {
+                buttons.forEach((b, i) => b.classList.toggle('keyboard-focused', i === focusedIndex));
+                if (buttons[focusedIndex]) buttons[focusedIndex].focus();
+            }
+
             function cleanup(result) {
                 overlay.remove();
-                document.removeEventListener('keydown', escHandler);
+                document.removeEventListener('keydown', keyHandler);
                 resolve(result);
             }
-            function escHandler(e) { if (e.key === 'Escape') cleanup(currentDialect); }
+            function keyHandler(e) {
+                if (e.key === 'Escape') { cleanup(currentDialect); return; }
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    focusedIndex = (focusedIndex + 1) % options.length;
+                    updateFocusHighlight();
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    focusedIndex = (focusedIndex - 1 + options.length) % options.length;
+                    updateFocusHighlight();
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    currentDialect = options[focusedIndex].id;
+                    cleanup(currentDialect);
+                }
+            }
 
-            options.forEach(opt => {
+            options.forEach((opt, i) => {
                 const b = document.createElement('button');
                 b.className = 'tx-dialect-btn' + (opt.id === currentDialect ? ' selected' : '');
                 b.textContent = opt.label;
                 b.onclick = () => { currentDialect = opt.id; cleanup(opt.id); };
                 optionsWrap.appendChild(b);
+                buttons.push(b);
             });
 
+            const hint = document.createElement('div');
+            hint.className = 'tx-dialect-hint';
+            hint.textContent = '⌨️ ينفع تتحكم بمفاتيح الأسهم (⬆️⬇️) وتأكد بـ Enter من غير ما تستخدم الماوس';
+
             overlay.onclick = (e) => { if (e.target === overlay) cleanup(currentDialect); };
-            document.addEventListener('keydown', escHandler);
+            document.addEventListener('keydown', keyHandler);
 
             box.appendChild(msg);
             box.appendChild(optionsWrap);
+            box.appendChild(hint);
             overlay.appendChild(box);
             document.body.appendChild(overlay);
+            updateFocusHighlight();
         });
     }
 
@@ -3492,6 +3571,12 @@
             const textarea = e.target.closest('.mark-content-textarea');
             const row = e.target.closest('tr');
             if (!textarea || !row) return;
+
+            // اختصارات المنصة نفسها (F للسيجمنت اللي بعده، R للي قبله) بتنقل الفوكس فعلاً للسيجمنت الجديد،
+            // لكن من غير ما تعمل اسكرول تلقائي يوريك مكانه - فبنعمل احنا الاسكرول هنا بدلها. block:'nearest'
+            // يعني لو الصف ظاهر أصلاً هيسيبه زي ما هو من غير ما يزعزع مكان الشاشة من غير داعي.
+            row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
             const serial = getSerialFromRow(row);
             if (serial === null || lastKnownValues.has(serial)) return;
             const val = textarea.value !== undefined ? textarea.value : textarea.textContent;
@@ -3793,7 +3878,7 @@
                 id: t.id, label: t.label, sections: t.sections,
                 emptyMessage: t.emptyMessage, excludeFromTotal: !!t.excludeFromTotal
             }));
-            localStorage.setItem(REVIEW_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), tabs: serializableTabs }));
+            localStorage.setItem(REVIEW_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), url: location.href, tabs: serializableTabs }));
         } catch (e) {
             console.warn('[ReviewCache] فشل حفظ نتيجة الفحص الشامل:', e);
         }
@@ -3812,6 +3897,12 @@
         const cached = loadCachedReview();
         if (!cached || !cached.tabs) {
             showToast('مفيش مراجعة شاملة محفوظة قبل كده', true);
+            return;
+        }
+        // نفس مشكلة النسخة الاحتياطية بالظبط: الكاش ده متخزن على مستوى الموقع كله، فلو اتحفظ من تاسك
+        // تاني وانت دلوقتي فاتح تاسك مختلف، لازم نمنع عرضه بدل ما نوريك نتايج تاسك تاني وانت فاكرها بتاعة ده
+        if (cached.url && cached.url !== location.href) {
+            showToast('آخر مراجعة شاملة محفوظة كانت لتاسك تاني مش التاسك ده - اعمل "🚀 مراجعة شاملة" على التاسك الحالي الأول', true);
             return;
         }
         const ageMinutes = Math.max(0, Math.round((Date.now() - cached.timestamp) / 60000));
@@ -3947,6 +4038,12 @@
             if (ops[k].type === 'delete' && ops[k + 1] && ops[k + 1].type === 'insert') {
                 merged.push({ type: 'replace', oldWord: ops[k].word, newWord: ops[k + 1].word });
                 k++;
+            } else if (ops[k].type === 'insert' && ops[k + 1] && ops[k + 1].type === 'delete') {
+                // نفس حالة الاستبدال بالظبط بس بترتيب عكسي (إضافة تيجي الأول ثم حذف) - بيحصل حسب
+                // اتجاه الـtie-break وقت الرجوع في جدول الـDP، ولو متعالجتش هنا هتتحسب "إضافة" و"حذف"
+                // منفصلين بدل استبدال واحد، وده بيضيّع فرصة تصنيفها كخطأ إملائي (hamza/تاء-هاء/ياء)
+                merged.push({ type: 'replace', oldWord: ops[k + 1].word, newWord: ops[k].word });
+                k++;
             } else if (ops[k].type === 'delete') {
                 merged.push({ type: 'delete', oldWord: ops[k].word });
             } else if (ops[k].type === 'insert') {
@@ -4020,17 +4117,33 @@
 
         // 3) فروقات على مستوى الكلمة (إملاء / استبدال / حذف / إضافة) - بنشغّل الـ diff على النسخة المنضّفة
         // عشان كلمة اتمسحت ورجعت اتكتبت هي هي بالظبط (حتى لو حصل نسخ/لصق فيها محرف مخفي) متترصدش كفرق
-        wordDiff(normalizeForQACompare(originalText), normalizeForQACompare(finalText)).forEach(d => {
-            if (d.type === 'replace') {
-                const cls = classifyWordChange(d.oldWord, d.newWord);
-                const text = (cls ? QA_LABELS[cls] : 'استبدال كلمة') + ': "' + d.oldWord + '" ← "' + d.newWord + '"';
-                (cls ? entry.spellingIssues : entry.otherChanges).push(text);
-            } else if (d.type === 'delete') {
-                entry.otherChanges.push('حذف كلمة: "' + d.oldWord + '"');
-            } else if (d.type === 'insert') {
-                entry.otherChanges.push('إضافة كلمة: "' + d.newWord + '"');
-            }
-        });
+        const diffOps = wordDiff(normalizeForQACompare(originalText), normalizeForQACompare(finalText));
+
+        // لو السيجمنت كله (أو أغلبه) اتلصق من جديد (زي لما تجيب الجمل من جيمناي وتحطها paste بنفس
+        // الترتيب) الـdiff بيرجّع عشرات عمليات حذف/إضافة لكل كلمة لوحدها - وده مش "تعديلات" فعلية،
+        // ده إعادة صياغة كاملة، ومحسوبتش كتعديل واحد بيضخّم العدد بشكل وهمي (زي "عدّلت 1258 حاجة").
+        // فبنكتشف الحالة دي (نسبة كبيرة من كلمات السيجمنت اتغيرت) ونسجّلها كتعديل واحد بس بدل كل كلمة لوحدها.
+        const oldWordCount = normalizeForQACompare(originalText).split(/\s+/).filter(Boolean).length;
+        const newWordCount = normalizeForQACompare(finalText).split(/\s+/).filter(Boolean).length;
+        const maxWordCount = Math.max(oldWordCount, newWordCount, 1);
+        const changeRatio = diffOps.length / maxWordCount;
+        const isFullRewrite = diffOps.length >= 4 && changeRatio > 0.6;
+
+        if (isFullRewrite) {
+            entry.otherChanges.push('✍️ إعادة صياغة/كتابة السيجمنت بالكامل تقريبًا (مش تعديل بسيط على كلمة أو كلمتين)');
+        } else {
+            diffOps.forEach(d => {
+                if (d.type === 'replace') {
+                    const cls = classifyWordChange(d.oldWord, d.newWord);
+                    const text = (cls ? QA_LABELS[cls] : 'استبدال كلمة') + ': "' + d.oldWord + '" ← "' + d.newWord + '"';
+                    (cls ? entry.spellingIssues : entry.otherChanges).push(text);
+                } else if (d.type === 'delete') {
+                    entry.otherChanges.push('حذف كلمة: "' + d.oldWord + '"');
+                } else if (d.type === 'insert') {
+                    entry.otherChanges.push('إضافة كلمة: "' + d.newWord + '"');
+                }
+            });
+        }
 
         return entry;
     }
@@ -4173,6 +4286,11 @@
         return null;
     }
 
+    // فئات مالهاش لازمة في رسالة المفرغ - وصف عام زي "حذف كلمة"/"إضافة كلمة"/"استبدال كلمة" أو "إعادة صياغة"
+    // مش بيوضحله غلطة معينة يصلحها، وهو مش هيفهم منها حاجة عملية. الرسالة لازم تركز بس على حاجات فعلية
+    // قابلة للتصحيح (تاجات/مسافات/إملاء/قواعد كتابة/لهجة...) - مش وصف عايم لتغيّر في الكلام.
+    const QA_VAGUE_CATEGORY_KEYS = new Set(['word_replace', 'word_delete', 'word_add', 'other']);
+
     // بيجمع كل ملاحظات كل السيجمنتات في تصنيفات، وبيرجعهم مرتبين من الأكتر تكراراً للأقل، كل تصنيف
     // معاه عدد مرات تكراره، أرقام السيجمنتات اللي ظهر فيها (من غير تكرار)، وأمثلة ملموسة (لحد 2) لشكل الغلط فعلياً
     function computeQAMistakePatterns(segmentReports) {
@@ -4233,7 +4351,7 @@
     // مع مثال ملموس لشكل الغلط فعلياً (مش وصف عايم) - بشكل BULK (كتلة واحدة) جاهزة للنسخ واللصق،
     // مع سطر فاضي للمراجع يحط فيه رقم التاسك بنفسه. الصياغة بتختلف في كل مرة تتبني فيها الرسالة.
     function buildTranscriberBulkMessage(patterns) {
-        const top = patterns.filter(p => p.count > 0).slice(0, 8);
+        const top = patterns.filter(p => p.count > 0 && !QA_VAGUE_CATEGORY_KEYS.has(p.key)).slice(0, 8);
         if (top.length === 0) return '';
         const lines = [];
         lines.push(pickRandomNoRepeat(TRANSCRIBER_GREETINGS, transcriberMessageState.greeting));
@@ -4271,18 +4389,18 @@
                 { text: '📝 عدد السيجمنتات اللي اتعدلت: ' + segmentReports.length, type: 'info' },
                 { text: '🚨 أخطاء حرجة (تاجات/مسافات/قواعد): ' + totalCritical, type: totalCritical > 0 ? 'warn' : 'ok' },
                 { text: '🔤 أخطاء إملائية (همزات/تاء-هاء/ياء-ألف مقصورة): ' + totalSpelling, type: totalSpelling > 0 ? 'warn' : 'ok' },
-                { text: '✏️ تعديلات أخرى (استبدال/حذف/إضافة كلمات): ' + totalOther, type: 'info' }
+                { text: '✏️ تعديلات أخرى (استبدال/حذف/إضافة كلمات، أو إعادة صياغة كاملة للسيجمنت): ' + totalOther, type: 'info' }
             ]
         }];
 
+        // تاب "تفاصيل كل سيجمنت" بقى مكتفي بالجملة قبل/بعد بس - أي تفصيل تاني (تاجات/مسافات/إملاء/تعديلات)
+        // أصلاً موجود لوحده في تابه المخصص له (أخطاء حرجة/إملائية/تعديلات أخرى)، فتكراره هنا كان مجرد
+        // كلام زيادة على الفاضي من غير ما يضيف حاجة.
         const detailSections = segmentReports.map(r => ({
             heading: 'سيجمنت ' + r.serial,
             items: [
                 { text: '📄 قبل: ' + r.originalText, type: 'info' },
-                { text: '✅ بعد: ' + r.finalText, type: 'ok' },
-                ...r.criticalIssues.map(i => ({ text: i, type: 'warn' })),
-                ...r.spellingIssues.map(i => ({ text: i, type: 'warn' })),
-                ...r.otherChanges.map(i => ({ text: i, type: 'info' }))
+                { text: '✅ بعد: ' + r.finalText, type: 'ok' }
             ]
         }));
 

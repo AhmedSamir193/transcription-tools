@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      17.4
+// @version      17.5
 // @match        *://*/*
 // @grant        none
 // ==/UserScript==
@@ -3558,6 +3558,29 @@
         redoBtnRef = btn;
     }
 
+    // بيأجل الاسكرول للـtick الجاي (بعد ما أي كود تاني للمنصة يخلص شغله في نفس اللحظة) - عشان لو المنصة
+    // نفسها بتعمل حاجة بالاسكرول (حتى لو غلط/ناقصة) بعد الفوكس، اسكرولنا احنا يبقى هو اللي يفضل الأخير.
+    function scrollRowIntoViewDeferred(row) {
+        setTimeout(() => {
+            row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 0);
+    }
+
+    // خط دفاع تاني احتياطي لاختصارات F/R بتاعة المنصة: لو لأي سبب حدث الـfocusin مبيتلقطش (زي لو المنصة
+    // بتنقل "الصف الحالي" بطريقة معينة مبتنقلش فوكس الـDOM فعلياً)، بنسمع لضغطة F/R نفسها على مستوى الصفحة
+    // كلها، وبعد ما نستنى شوية (نديله فرصة يخلص شغله) نشوف الـactiveElement وقتها ونعمله اسكرول.
+    // لو المشكلة استمرت، افتح Console (F12) واضغط F أو R وشوف اللوج اللي هيطلع، وابعتهولي.
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'f' && e.key !== 'F' && e.key !== 'r' && e.key !== 'R') return;
+
+        setTimeout(() => {
+            const active = document.activeElement;
+            const row = active ? active.closest('tr') : null;
+            console.log('[F/R Debug] key=' + e.key + ' | activeElement=' + (active ? active.tagName + '.' + active.className : 'null') + ' | لقى صف؟ ' + (row ? 'آه، سيجمنت ' + getSerialFromRow(row) : 'لأ'));
+            if (row) scrollRowIntoViewDeferred(row);
+        }, 30);
+    }, true);
+
     function initEditTracking() {
         const table = document.querySelector('#changyuliu_table');
         if (!table) return false;
@@ -3573,9 +3596,10 @@
             if (!textarea || !row) return;
 
             // اختصارات المنصة نفسها (F للسيجمنت اللي بعده، R للي قبله) بتنقل الفوكس فعلاً للسيجمنت الجديد،
-            // لكن من غير ما تعمل اسكرول تلقائي يوريك مكانه - فبنعمل احنا الاسكرول هنا بدلها. block:'nearest'
-            // يعني لو الصف ظاهر أصلاً هيسيبه زي ما هو من غير ما يزعزع مكان الشاشة من غير داعي.
-            row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            // لكن من غير ما تعمل اسكرول تلقائي يوريك مكانه - فبنعمل احنا الاسكرول هنا بدلها.
+            // بنأجل الاسكرول بـsetTimeout(0) عشان نتأكد إنه بيتنفذ بعد أي كود تاني للمنصة نفسها بيشتغل
+            // في نفس اللحظة (لو حصل سباق وكودهم اشتغل بعدنا وبيلغي الاسكرول بتاعنا، التأجيل بيخليه يشتغل هو الأخير).
+            scrollRowIntoViewDeferred(row);
 
             const serial = getSerialFromRow(row);
             if (serial === null || lastKnownValues.has(serial)) return;

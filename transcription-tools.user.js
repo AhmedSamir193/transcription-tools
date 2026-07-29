@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      17.5
+// @version      17.6
 // @match        *://*/*
 // @grant        none
 // ==/UserScript==
@@ -3558,28 +3558,102 @@
         redoBtnRef = btn;
     }
 
+    // ==================== اسكرول ناعم مخصوص (v19.0) - بديل عن scrollIntoView الافتراضي ====================
+    // الـscrollIntoView({behavior:'smooth'}) الافتراضي في المتصفح بتاعته منحنى حركة شبه خطي وبيوقف
+    // فجأة، فبيحس المستخدم إنها "حركة ميتة". هنا بنعمل أنيميشن بأنفسنا بمنحنى ease-in-out (بطيء في
+    // البداية، سريع في النص، بطيء تاني في النهاية) وبيبقى أطول شوية (420ms) عشان الحركة تبان واضحة
+    // ومريحة للعين. كمان بيلغي أي أنيميشن سابق لسه شغال لو دُست F/R بسرعة ورا بعض (بدل ما يتلخبطوا
+    // فوق بعض ويعملوا اهتزاز).
+    function easeInOutCubic(t) {
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    function findScrollableAncestor(el) {
+        let node = el.parentElement;
+        while (node && node !== document.documentElement) {
+            const style = getComputedStyle(node);
+            if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && node.scrollHeight > node.clientHeight) {
+                return node;
+            }
+            node = node.parentElement;
+        }
+        return document.scrollingElement || document.documentElement;
+    }
+
+    const activeScrollAnimations = new WeakMap(); // container -> animation frame id
+    function smoothScrollRowIntoView(row, duration = 420) {
+        const container = findScrollableAncestor(row);
+        if (!container) return;
+
+        const prevFrame = activeScrollAnimations.get(container);
+        if (prevFrame) cancelAnimationFrame(prevFrame);
+
+        const containerRect = container.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        const maxScroll = container.scrollHeight - container.clientHeight;
+        let targetScrollTop = container.scrollTop + (rowRect.top - containerRect.top) - (containerRect.height / 2 - rowRect.height / 2);
+        targetScrollTop = Math.max(0, Math.min(maxScroll, targetScrollTop));
+
+        const startScrollTop = container.scrollTop;
+        const delta = targetScrollTop - startScrollTop;
+        if (Math.abs(delta) < 2) return; // أصلاً في المكان الصح، متعملش أنيميشن من غير داعي
+
+        const startTime = performance.now();
+        function step(now) {
+            const progress = Math.min(1, (now - startTime) / duration);
+            container.scrollTop = startScrollTop + delta * easeInOutCubic(progress);
+            if (progress < 1) {
+                activeScrollAnimations.set(container, requestAnimationFrame(step));
+            } else {
+                activeScrollAnimations.delete(container);
+            }
+        }
+        activeScrollAnimations.set(container, requestAnimationFrame(step));
+    }
+
     // بيأجل الاسكرول للـtick الجاي (بعد ما أي كود تاني للمنصة يخلص شغله في نفس اللحظة) - عشان لو المنصة
     // نفسها بتعمل حاجة بالاسكرول (حتى لو غلط/ناقصة) بعد الفوكس، اسكرولنا احنا يبقى هو اللي يفضل الأخير.
     function scrollRowIntoViewDeferred(row) {
         setTimeout(() => {
-            row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            smoothScrollRowIntoView(row);
         }, 0);
     }
 
-    // خط دفاع تاني احتياطي لاختصارات F/R بتاعة المنصة: لو لأي سبب حدث الـfocusin مبيتلقطش (زي لو المنصة
-    // بتنقل "الصف الحالي" بطريقة معينة مبتنقلش فوكس الـDOM فعلياً)، بنسمع لضغطة F/R نفسها على مستوى الصفحة
-    // كلها، وبعد ما نستنى شوية (نديله فرصة يخلص شغله) نشوف الـactiveElement وقتها ونعمله اسكرول.
-    // لو المشكلة استمرت، افتح Console (F12) واضغط F أو R وشوف اللوج اللي هيطلع، وابعتهولي.
-    document.addEventListener('keydown', (e) => {
-        if (e.key !== 'f' && e.key !== 'F' && e.key !== 'r' && e.key !== 'R') return;
+    // ==================== اسكرول F/R المعتمد على حالة الموقع الحقيقية (v18.0) ====================
+    // اكتشفنا (بعد تفكيك كود الموقع نفسه) إن اختصارات F/R بتاعة المنصة (nextVad/prevVad) بتحرك بس
+    // متغير داخلي جوه الـVue instance اسمه speechInfo.currentPlayIndex (وده اللي بيحرك مؤشر تشغيل
+    // الصوت) - ومفيش أي فوكس DOM أو scrollIntoView بيحصل من المنصة خالص، سواء الفلتر شغال أو لأ.
+    // فبدل ما نستنى فوكس مش هيحصل، بنمسك الـVue instance نفسه ونراقب الرقم ده مباشرة، وأي ما اتغيّر
+    // نجيب الصف بنفس الرقم (المنصة بتستخدم الرقم ده كـid للـ<tr> مباشرة) ولو موجود وظاهر (مش مخفي
+    // بسبب الفلتر) نعمله اسكرول. لو مش ظاهر (اتفلتر برا) بنتجاهله بهدوء من غير أي خطأ.
+    let markVueInstance = null;
+    function findMarkVueInstance() {
+        if (markVueInstance) return markVueInstance;
+        const all = document.querySelectorAll('*');
+        for (const el of all) {
+            if (el.__vue__ && typeof el.__vue__.jumpToTextPos === 'function') {
+                markVueInstance = el.__vue__;
+                break;
+            }
+        }
+        return markVueInstance;
+    }
 
-        setTimeout(() => {
-            const active = document.activeElement;
-            const row = active ? active.closest('tr') : null;
-            console.log('[F/R Debug] key=' + e.key + ' | activeElement=' + (active ? active.tagName + '.' + active.className : 'null') + ' | لقى صف؟ ' + (row ? 'آه، سيجمنت ' + getSerialFromRow(row) : 'لأ'));
-            if (row) scrollRowIntoViewDeferred(row);
-        }, 30);
-    }, true);
+    let lastSeenPlayIndex = null;
+    function syncScrollWithCurrentPlayIndex() {
+        const vm = findMarkVueInstance();
+        if (!vm || !vm.speechInfo) return;
+        const idx = vm.speechInfo.currentPlayIndex;
+        if (idx === lastSeenPlayIndex || idx === undefined || idx === null || idx === '') return;
+        lastSeenPlayIndex = idx;
+        const row = document.getElementById(String(idx));
+        // offsetParent بيبقى null لو الصف مخفي (زي إنه اتفلتر برا) - في الحالة دي متعمدين نتجاهله
+        // من غير أي console.log أو تنبيه، لأنها حالة طبيعية ومتوقعة مش خطأ.
+        if (row && row.offsetParent !== null) {
+            scrollRowIntoViewDeferred(row);
+        }
+    }
+    setInterval(syncScrollWithCurrentPlayIndex, 150);
 
     function initEditTracking() {
         const table = document.querySelector('#changyuliu_table');
@@ -3595,10 +3669,8 @@
             const row = e.target.closest('tr');
             if (!textarea || !row) return;
 
-            // اختصارات المنصة نفسها (F للسيجمنت اللي بعده، R للي قبله) بتنقل الفوكس فعلاً للسيجمنت الجديد،
-            // لكن من غير ما تعمل اسكرول تلقائي يوريك مكانه - فبنعمل احنا الاسكرول هنا بدلها.
-            // بنأجل الاسكرول بـsetTimeout(0) عشان نتأكد إنه بيتنفذ بعد أي كود تاني للمنصة نفسها بيشتغل
-            // في نفس اللحظة (لو حصل سباق وكودهم اشتغل بعدنا وبيلغي الاسكرول بتاعنا، التأجيل بيخليه يشتغل هو الأخير).
+            // ده فوكس حقيقي (كليك/Tab يدوي) - اختصارات F/R نفسها بقت متغطية بمنطق منفصل
+            // (syncScrollWithCurrentPlayIndex) لأنها أصلاً مش بتحرك الفوكس خالص، شوف فوق.
             scrollRowIntoViewDeferred(row);
 
             const serial = getSerialFromRow(row);
@@ -4861,25 +4933,62 @@
         const style = document.createElement('style');
         style.id = 'tx-mascot-style';
         style.textContent = `
+            @keyframes tx-mascot-float {
+                0%, 100% { transform: translateY(0); }
+                50% { transform: translateY(-5px); }
+            }
+            @keyframes tx-mascot-glow-pulse {
+                0%, 100% { opacity: 0.55; transform: scale(1); }
+                50% { opacity: 0.9; transform: scale(1.08); }
+            }
+            @keyframes tx-mascot-border-shimmer {
+                0% { background-position: 0% 50%; }
+                100% { background-position: 200% 50%; }
+            }
+
+            #tx-floating-menu { position: fixed; }
+            #tx-floating-menu > .tx-mascot-btn-wrap {
+                position: relative;
+                animation: tx-mascot-float 3.4s ease-in-out infinite;
+            }
+            .tx-mascot-btn-wrap::before {
+                content: '';
+                position: absolute; inset: -6px;
+                border-radius: 50px;
+                background: radial-gradient(circle, rgba(124,58,237,0.55), rgba(56,189,248,0.25) 60%, transparent 75%);
+                filter: blur(10px);
+                z-index: -1;
+                animation: tx-mascot-glow-pulse 2.6s ease-in-out infinite;
+                pointer-events: none;
+            }
+
             .tx-mascot-btn {
                 display: flex; align-items: center; gap: 9px;
-                background: rgba(14,14,18,0.84);
+                background:
+                    linear-gradient(rgba(14,14,18,0.88), rgba(14,14,18,0.88)) padding-box,
+                    linear-gradient(120deg, #7c3aed, #38bdf8, #7c3aed) border-box;
+                background-size: 100% 100%, 200% 100%;
+                animation: tx-mascot-border-shimmer 5s linear infinite;
                 backdrop-filter: blur(20px) saturate(180%);
                 -webkit-backdrop-filter: blur(20px) saturate(180%);
-                color: #e5e7eb; border: none; border-radius: 50px;
+                color: #e5e7eb; border: 1.5px solid transparent; border-radius: 50px;
                 padding: 9px 18px 9px 14px; cursor: pointer;
                 box-shadow: 0 10px 28px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
-                transition: all 0.25s cubic-bezier(0.2,0.8,0.2,1);
+                transition: transform 0.25s cubic-bezier(0.2,0.8,0.2,1), box-shadow 0.25s cubic-bezier(0.2,0.8,0.2,1);
                 font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; font-weight: 700; font-size: 13px;
                 pointer-events: auto;
             }
             .tx-mascot-btn:hover {
-                background: rgba(20,20,26,0.92);
-                box-shadow: 0 14px 32px rgba(0,0,0,0.55), 0 0 0 4px rgba(124,58,237,0.12), inset 0 1px 0 rgba(255,255,255,0.1);
+                transform: scale(1.05);
+                box-shadow: 0 14px 36px rgba(0,0,0,0.55), 0 0 0 5px rgba(124,58,237,0.16), inset 0 1px 0 rgba(255,255,255,0.12);
             }
             .tx-mascot-btn.open {
-                background: rgba(32,14,14,0.88);
-                box-shadow: 0 10px 28px rgba(220,38,38,0.32), inset 0 1px 0 rgba(255,255,255,0.08);
+                background:
+                    linear-gradient(rgba(32,14,14,0.9), rgba(32,14,14,0.9)) padding-box,
+                    linear-gradient(120deg, #dc2626, #f97316, #dc2626) border-box;
+                background-size: 100% 100%, 200% 100%;
+                box-shadow: 0 10px 30px rgba(220,38,38,0.36), inset 0 1px 0 rgba(255,255,255,0.08);
+                transform: scale(1.03);
             }
 
             .tx-mascot-face, .tx-mascot-eye, .tx-mascot-pupil {
@@ -5118,7 +5227,10 @@
         };
 
         menuContainer.appendChild(buttonsWrapper);
-        menuContainer.appendChild(mainBtn);
+        const mainBtnWrap = document.createElement('div');
+        mainBtnWrap.className = 'tx-mascot-btn-wrap';
+        mainBtnWrap.appendChild(mainBtn);
+        menuContainer.appendChild(mainBtnWrap);
         document.body.appendChild(menuContainer);
     }
 

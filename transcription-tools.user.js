@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      17.6
+// @version      17.6.2
 // @match        *://*/*
 // @grant        none
 // ==/UserScript==
@@ -3581,7 +3581,7 @@
     }
 
     const activeScrollAnimations = new WeakMap(); // container -> animation frame id
-    function smoothScrollRowIntoView(row, duration = 420) {
+    function smoothScrollRowIntoView(row, duration = 160) {
         const container = findScrollableAncestor(row);
         if (!container) return;
 
@@ -3653,7 +3653,8 @@
             scrollRowIntoViewDeferred(row);
         }
     }
-    setInterval(syncScrollWithCurrentPlayIndex, 150);
+    // تم إلغاء تشغيل المزامنة دي بالكامل بناءً على طلبك - الاسكرول التلقائي (سواء بالكليك أو F/R) بقى متوقف خالص.
+    // setInterval(syncScrollWithCurrentPlayIndex, 150);
 
     function initEditTracking() {
         const table = document.querySelector('#changyuliu_table');
@@ -3669,9 +3670,7 @@
             const row = e.target.closest('tr');
             if (!textarea || !row) return;
 
-            // ده فوكس حقيقي (كليك/Tab يدوي) - اختصارات F/R نفسها بقت متغطية بمنطق منفصل
-            // (syncScrollWithCurrentPlayIndex) لأنها أصلاً مش بتحرك الفوكس خالص، شوف فوق.
-            scrollRowIntoViewDeferred(row);
+            // تم إلغاء الاسكرول التلقائي هنا بالكامل بناءً على طلبك (كان بيعمل دوخة/بطء وقت الكليك اليدوي).
 
             const serial = getSerialFromRow(row);
             if (serial === null || lastKnownValues.has(serial)) return;

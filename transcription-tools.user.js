@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      17.6.2
+// @version      20.0.0
 // @match        *://*/*
 // @grant        none
 // ==/UserScript==
@@ -73,7 +73,7 @@
             const text = (node.nodeValue || '').trim();
             if (!text || !WATERMARK_NUMERIC_PATTERN.test(text)) continue;
             const el = node.parentElement;
-            if (!el || el.closest('#tx-floating-menu, .tx-panel-overlay, #tx-timer-widget, .tx-help-btn, textarea, input')) continue;
+            if (!el || el.closest('#tx-floating-menu, .tx-panel-overlay, #tx-timer-widget, .tx-help-btn, .tx-live-toggle-widget, textarea, input')) continue;
             candidateParents.set(text, (candidateParents.get(text) || 0) + 1);
             if (!nodesByText.has(text)) nodesByText.set(text, []);
             nodesByText.get(text).push(el);
@@ -232,7 +232,8 @@
                 backdrop-filter: blur(20px) saturate(180%);
                 -webkit-backdrop-filter: blur(20px) saturate(180%);
                 border: 1px solid rgba(16,185,129,0.4);
-                border-radius: 50px; padding: 11px 20px 11px 16px;
+                border-radius: 24px; padding: 11px 20px 11px 16px;
+                max-width: min(92vw, 520px); box-sizing: border-box;
                 z-index: 300000; overflow: hidden;
                 box-shadow: 0 12px 30px rgba(0,0,0,0.5), 0 0 25px rgba(16,185,129,0.22), inset 0 1px 0 rgba(255,255,255,0.08);
                 direction: rtl; font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
@@ -246,11 +247,14 @@
                 background: rgba(16,185,129,0.16); color: #10B981;
             }
             .tx-panel-toast.error .tx-toast-icon { background: rgba(239,68,68,0.16); color: #f87171; }
-            .tx-toast-text-wrap { display: flex; flex-direction: column; line-height: 1.35; }
-            .tx-toast-text-main { color: #fff; font-weight: 700; font-size: 12.5px; }
+            /* (v23.0) قبل كده الرسالة ما كانش ليها max-width ولا التفاف، فأي توست بنص طويل كان بيتمدد
+               بره حدود الشاشة (خصوصاً على شاشات ضيقة) وبيتقطع بصرياً عند حافة الشكل الكبسولي - النص
+               دلوقتي بيلف على أكتر من سطر جوه عرض معقول بدل ما يخرج بره حدود الشاشة. */
+            .tx-toast-text-wrap { display: flex; flex-direction: column; line-height: 1.35; max-width: min(78vw, 460px); }
+            .tx-toast-text-main { color: #fff; font-weight: 700; font-size: 12.5px; white-space: normal; word-break: break-word; }
             .tx-toast-num { color: #10B981; font-weight: 800; }
             .tx-panel-toast.error .tx-toast-num { color: #f87171; }
-            .tx-toast-text-sub { color: rgba(255,255,255,0.55); font-size: 0.85em; margin-top: 1px; }
+            .tx-toast-text-sub { color: rgba(255,255,255,0.55); font-size: 0.85em; margin-top: 1px; white-space: normal; word-break: break-word; }
             .tx-toast-progress {
                 position: absolute; bottom: 0; right: 0; height: 2px; width: 100%;
                 background: #10B981; animation: tx-toast-shrink 2.6s linear forwards;
@@ -329,6 +333,331 @@
         if (status === 'error') row.classList.add('tx-row-error');
         else if (status === 'warn') row.classList.add('tx-row-warn');
         else if (status === 'ok') row.classList.add('tx-row-ok');
+    }
+
+    // ==================== اختصارات كيبورد لإضافة تاج الـ Attribute وانت جوه السيجمنت (v22.0) ====================
+    // Alt+1/2/3/4 بيحاكي ضغطة ماوس حقيقية على خيار التاج في بانل/بوب-أب "Attribute" بتاع الموقع نفسه
+    // (مش بينده على أي دالة داخلية للموقع) - فـ Vue بتاعة الموقع هي اللي بتطبّق التاج على السيجمنت اللي
+    // إنت فوكس/بتكتب فيه دلوقتي بالظبط، لأن الموقع بيحدد "السيجمنت الحالي" أوتوماتيك لحظة ما تدخل تكتب فيه.
+    // ملحوظة (v21.0): كانت Ctrl+Alt+رقم، اتغيّرت لـ Alt+رقم بس - أسهل في الضغط، ومفيش تعارض معروف بيها
+    // مع اختصارات ويندوز أو كروم (زي Alt+V المستخدم فعلاً لحافظة النصوص). الترتيب: 1=NOISE، 2=DEAF،
+    // 3=OOV، 4=OVERLAP.
+    // ملحوظة (v22.0): "شيل التاج" كان Alt+0 - إيدك بتتمدد بعيد لرقم 0 كل مرة، فاتغيّر لـ Alt+X (X جنب
+    // الرقم/الحروف اللي إنت أصلاً بتستخدمها، مفيش تعارض معروف بيه في المتصفحات أو ويندوز، وسهل في الضغط).
+    const ATTR_TAG_SHORTCUTS = {
+        'Digit1': '<NOISE>',
+        'Digit2': '<DEAF>',
+        'Digit3': '<OOV>',
+        'Digit4': '<OVERLAP>'
+    };
+
+    // (v23.0) أحياناً حد بيكتب تاج زي <DEAF> أو <NOISE> كنص عادي جوه مربع الكتابة (مش عن طريق بانل
+    // الـAttribute الحقيقي) - وده بيظهر كـ"تاج شكلي" في الفحص الحي بس فعلياً هو مجرد كلام. Alt+X كان
+    // بيشيل التاج الحقيقي (الـpill) بس مش بيلمس التاج المكتوب كنص. هنا بنستهدف التاجات الأربعة دي
+    // بالظبط (مش أي كلام تاني) عشان لو اتكتبوا كنص، Alt+X يشيلهم زيهم زي الـpill بالظبط.
+    const TEXT_TAG_TOKEN_REGEX = /<\s*(?:NOISE|DEAF|OOV|OVERLAP)\s*>/gi;
+
+    // ملحوظة مهمة: البانل ده بيتفتح في الموقع الأصلي بالهوفر الحقيقي بالماوس (CSS :hover) بس - وده حاجة
+    // الجافاسكريبت مش قادرة تحاكيها (dispatch لحدث mouseenter/mouseover مش بيغيّر حالة :hover الحقيقية).
+    // فالعنصر بيفضل display:none (offsetParent = null) لحد ما تحصل هوفر حقيقي. الحل: مش محتاجين العنصر
+    // يبقى ظاهر بصرياً أصلاً - أي حدث click متبعوت بـ dispatchEvent بيشغّل الـ listener المربوط بالعنصر
+    // عادي حتى لو كان مخفي بالكامل (display:none)، لأن ده استدعاء مباشر للـ listener مش محاكاة حقيقية
+    // للماوس محتاجة hit-testing بصري. فبنلاقي العنصر بس (من غير شرط ظهور) وندوس عليه مباشرة.
+    // بيرجع الصف (tr) بتاع السيجمنت اللي إنت واقف جواه دلوقتي (الـ textarea اللي عليها الفوكس) -
+    // ده اللي بيضمن إننا نطبّق التاج على السيجمنت الصح بالظبط، مش أي حاجة تانية شكلها زيها في الصفحة.
+    function getActiveSegmentRow() {
+        const active = document.activeElement;
+        return active ? active.closest('tr') : null;
+    }
+
+    // بندوّر جوه صف السيجمنت الحالي بس أول حاجة (لو خلية الـ Attribute موجودة فعلاً جواه) - ده بيقلل
+    // احتمال إننا نلقط نسخة تخص صف تاني. لو مفيش نتيجة (زي لو البانل بتاع الموقع بيتعمله teleport
+    // لبرة الجدول لـ document.body)، بنرجع نبحث في الصفحة كلها كـ fallback - لكن (v22.0) الـfallback
+    // ده كان بيرجّع أول عنصر في ترتيب الـDOM من غير ما يتأكد إنه فعلاً بتاع صف السيجمنت الحالي، وده
+    // كان بيسبب "التاج بيتطبق عشوائي على سيجمنت تاني" لو فيه نسخ "شبح" متكررة في الصفحة. دلوقتي
+    // findAttrTagOptions لسه بترجع كل النسخ زي ما هي، بس اللي بيستخدمها (pickBestTagOption) هو
+    // اللي بيفضّل النسخة المتأكد إنها جوه scopeRow قبل ما ياخد أي نسخة تانية.
+    function findAttrTagOptions(tagTitle, scopeRow) {
+        const scope = scopeRow ? scopeRow.querySelector('.attr') : null;
+        if (scope) {
+            const scoped = scope.querySelectorAll('.labelList span.text[title="' + tagTitle + '"]');
+            if (scoped.length > 0) return scoped;
+        }
+        return document.querySelectorAll('.labelList span.text[title="' + tagTitle + '"]');
+    }
+
+    // بيختار من كل النسخ المطابقة (جايه من findAttrTagOptions) النسخة اللي فعلاً جوه صف السيجمنت
+    // الحالي (row.contains) لو موجودة - وده بيضمن إننا منطبقش على نسخة "شبح" بتاعة صف تاني حتى لو
+    // fallback البحث في الصفحة كلها رجّع أكتر من نتيجة. لو مفيش ولا نسخة مؤكدة جوه الصف، بناخد أول
+    // نتيجة زي القديم (أحسن من عدم التطبيق خالص، بس الأولوية دايماً للنسخة المؤكدة).
+    function pickBestTagOption(spans, row) {
+        if (!spans || spans.length === 0) return null;
+        if (row) {
+            const contained = Array.from(spans).find(s => row.contains(s));
+            if (contained) return contained;
+        }
+        return spans[0];
+    }
+
+    // (v23.0) الجزء الفعلي من تطبيق التاج على صف بعينه، مستقل عن "الصف المتفوكس عليه دلوقتي" - ده اللي
+    // بيسمح لنفس المنطق يتستخدم في اختصار Alt+رقم العادي (على السيجمنت الحالي) وكمان في التطبيق الدفعي
+    // (Batch) على مجموعة صفوف محددة مرة واحدة، من غير تكرار كود. بيرجّع true/false على حسب لو فعلاً
+    // اتطبّق حاجة، عشان اللي بينادي عليه (batch) يقدر يعد كام صف نجح فعلاً.
+    async function applyAttrTagToRow(row, tagTitle, opts) {
+        const silent = !!(opts && opts.silent);
+        const rowInfo = getRowInfo(row);
+        const serial = rowInfo.serial;
+        const beforeTags = rowInfo.attrTagTexts.filter(Boolean);
+
+        if (beforeTags.length === 1 && beforeTags[0] === tagTitle) {
+            if (!silent) showToast('السيجمنت أصلاً عليه تاج ' + tagTitle + ' ✅');
+            return false;
+        }
+
+        const oldTags = beforeTags.filter(t => t && t !== tagTitle);
+        if (oldTags.length > 0) {
+            oldTags.forEach(oldTag => {
+                const match = pickBestTagOption(findAttrTagOptions(oldTag, row), row);
+                if (match) match.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            });
+            await sleep(120);
+        }
+
+        const spans = findAttrTagOptions(tagTitle, row);
+        const match = pickBestTagOption(spans, row);
+        if (!match) {
+            if (!silent) showToast('معرفتش ألاقي خيار التاج "' + tagTitle + '" في الصفحة خالص - يمكن شكل البانل اتغيّر في تحديث للموقع', true);
+            return false;
+        }
+        match.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        if (!silent) showToast((oldTags.length > 0 ? 'تم استبدال التاج بـ ' : 'تم تطبيق تاج ') + tagTitle + ' ⌨️');
+        pushTagUndoStep(serial, beforeTags, [tagTitle], 'تاج ' + tagTitle);
+        return true;
+    }
+
+    async function applyAttrTagShortcut(tagTitle) {
+        const row = getActiveSegmentRow();
+        // (v22.0) لو مفيش سيجمنت متفوكس عليه دلوقتي (يعني مش واقف جوه textarea سيجمنت)، منطبقش على
+        // أي حاجة خالص - قبل كده كان بيدور على أول نسخة في الصفحة كلها ويطبّق عليها "عشوائي" حتى لو
+        // إنت مش واقف في أي سيجمنت، وده بالظبط اللي كنت بتشتكي منه.
+        if (!row) {
+            showToast('دوس جوه مربع كتابة السيجمنت الأول عشان الاختصار يعرف يطبّق على انهي سيجمنت بالظبط', true);
+            return;
+        }
+        // ملحوظة مهمة (v17.7.2): كنا فاكرين إن بعت الكليك لكل النسخ المطابقة آمن ("احتياطي" لو فيه
+        // تكرار)، بس اتضح إن ده هو نفسه السبب في مشكلة "التاج مش بيتطبق": الموقع فعلاً عنده نسخة
+        // "شبح" متكررة من نفس الخيار في الـDOM، وكل نسخة منهم بتنفّذ الـtoggle الحقيقي بنجاح - فكليكتين
+        // معناهم: إضافة التاج فوراً متبوعة بشيله (toggle مرتين = رجوع لنفس الحالة)، فالنتيجة الظاهرة
+        // إن مفيش حاجة اتغيّرت خالص. الحل: نبعت كليك واحد بس - للنسخة المؤكدة (أو الأولى لو مفيش مؤكدة).
+        await applyAttrTagToRow(row, tagTitle);
+    }
+
+    // (v23.0) نفس فكرة applyAttrTagToRow بس للشيل - مستقل عن الصف المتفوكس عليه، عشان يتستخدم في
+    // الشيل الدفعي (Batch) كمان.
+    async function removeAttrTagFromRow(row, opts) {
+        const silent = !!(opts && opts.silent);
+        const rowInfo = getRowInfo(row);
+        const serial = rowInfo.serial;
+        const existingTags = rowInfo.attrTagTexts.filter(Boolean);
+        const removedTextTag = stripLiteralTagTextFromRow(row);
+
+        if (existingTags.length === 0 && !removedTextTag) return false;
+
+        if (existingTags.length > 0) {
+            existingTags.forEach(tag => {
+                const match = pickBestTagOption(findAttrTagOptions(tag, row), row);
+                if (match) match.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            });
+            pushTagUndoStep(serial, existingTags, [], 'شيل التاج');
+        }
+
+        if (!silent) {
+            if (existingTags.length > 0 && removedTextTag) showToast('تم شيل تاج الـAttribute وكمان التاج المكتوب كنص 🗑️');
+            else if (removedTextTag) showToast('تم شيل التاج المكتوب كنص من السيجمنت 🗑️');
+            else showToast('تم شيل التاج من السيجمنت 🗑️');
+        }
+        return true;
+    }
+
+    // Alt+X (كان Alt+0 قبل v22.0) - بيشيل أي تاج Attribute موجود على السيجمنت الحالي خالص، من غير ما
+    // يحط بدله تاج تاني. بيستخدم نفس آلية الـtoggle (كليك تاني على نفس خيار التاج بيشيله) لكل
+    // التاجات الموجودة على السيجمنت (ممكن يبقوا أكتر من واحد متكدسين لو حصل خطأ سابق).
+    // بيشيل أي تاج من التاجات الأربعة (NOISE/DEAF/OOV/OVERLAP) لو اتكتب كنص عادي جوه textarea
+    // السيجمنت، من غير ما يلمس أي كلام تاني. بيستخدم setNativeFieldValue عشان الموقع (Vue) يحس
+    // بالتغيير زي أي كتابة عادية - وده كمان بيخليه يتسجل لوحده في نظام تراجع التعديلات النصية
+    // العادي (initEditTracking بيسمع لحدث 'input') من غير داعي لتعامل خاص.
+    function stripLiteralTagTextFromRow(row) {
+        const textarea = row.querySelector('.textContent .mark-content-textarea');
+        if (!textarea) return false;
+        const before = textarea.value !== undefined ? textarea.value : textarea.textContent;
+        if (!before) return false;
+        TEXT_TAG_TOKEN_REGEX.lastIndex = 0;
+        if (!TEXT_TAG_TOKEN_REGEX.test(before)) return false;
+        TEXT_TAG_TOKEN_REGEX.lastIndex = 0;
+        let after = before.replace(TEXT_TAG_TOKEN_REGEX, '');
+        // تنضيف المسافات الزيادة اللي ممكن تفضل مكان التاج اللي اتشال (زي مسافتين ورا بعض أو مسافة في الأول/الآخر)
+        after = after.replace(/\s{2,}/g, ' ').replace(/^\s+|\s+$/g, '');
+        if (after === before) return false;
+        setNativeFieldValue(textarea, after);
+        return true;
+    }
+
+    async function removeAttrTagShortcut() {
+        const row = getActiveSegmentRow();
+        if (!row) {
+            showToast('دوس جوه مربع كتابة السيجمنت الأول عشان الاختصار يعرف يشيل تاج انهي سيجمنت بالظبط', true);
+            return;
+        }
+        const removed = await removeAttrTagFromRow(row);
+        if (!removed) showToast('السيجمنت مفيهوش تاج Attribute ولا تاج مكتوب كنص');
+    }
+
+    // ==================== Command Palette موحّد - Alt+K (v23.0) ====================
+    // بيجمع كل أزرار القائمة العائمة (زرار زرار زي ما هو موجود فعلاً بنصه وإيموجيه) + كام أمر إضافي
+    // (تشغيل/إيقاف الإصلاح التلقائي أثناء الكتابة، تنظيف مساحة التخزين) في مكان واحد بحث نصي، بدل
+    // ما تدوّر عليهم بالعين جوه القائمة العائمة. بيشتغل بالكليك على أي زرار حقيقي (btn.click())
+    // فمفيش تكرار منطق - أي زرار جديد يتضاف في القائمة العائمة هيظهر هنا أوتوماتيك.
+    function ensureCommandPaletteStyles() {
+        if (document.getElementById('tx-cmdk-style')) return;
+        const style = document.createElement('style');
+        style.id = 'tx-cmdk-style';
+        style.textContent = `
+            .tx-cmdk-box { width: 520px; }
+            .tx-cmdk-input-wrap { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+            .tx-cmdk-input {
+                width: 100%; box-sizing: border-box; background: rgba(255,255,255,0.07);
+                border: 1px solid rgba(255,255,255,0.16); border-radius: 10px; padding: 10px 12px;
+                color: #fff; font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; font-size: 13.5px;
+                direction: rtl; outline: none;
+            }
+            .tx-cmdk-input:focus { border-color: rgba(167,139,250,0.6); }
+            .tx-cmdk-input::placeholder { color: rgba(255,255,255,0.4); }
+            .tx-cmdk-list { max-height: 55vh; overflow-y: auto; padding: 6px; }
+            .tx-cmdk-item {
+                display: flex; align-items: center; padding: 10px 12px; border-radius: 10px;
+                cursor: pointer; color: #e2e8f0; font-size: 13px;
+                font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+            }
+            .tx-cmdk-item:hover, .tx-cmdk-item.tx-cmdk-active { background: rgba(124,58,237,0.25); color: #fff; }
+            .tx-cmdk-empty { padding: 24px; text-align: center; color: rgba(255,255,255,0.4); font-size: 13px; }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function getCommandPaletteEntries() {
+        const entries = [];
+        const seen = new Set();
+        document.querySelectorAll('.tx-tool-btn').forEach(btn => {
+            const label = (btn.textContent || '').trim();
+            if (!label || seen.has(label)) return; // منمنعش تكرار (زرار ممكن يبقى معاد ترتيبه في القائمة)
+            seen.add(label);
+            entries.push({ label, run: () => btn.click() });
+        });
+        entries.push({
+            label: (liveAutoFixEnabled ? '🛑 إيقاف' : '✅ تشغيل') + ' الإصلاح التلقائي أثناء الكتابة',
+            run: toggleLiveAutoFix
+        });
+        entries.push({ label: '🧹 تنظيف مساحة التخزين المحلية للأداة', run: () => runTxStorageCleanup(true) });
+        entries.push({ label: '📊 عرض حجم التخزين المستخدم', run: showTxStorageUsageToast });
+        return entries;
+    }
+
+    function showCommandPalette() {
+        ensurePanelStyles();
+        ensureCommandPaletteStyles();
+
+        const allEntries = getCommandPaletteEntries();
+        const overlay = document.createElement('div');
+        overlay.className = 'tx-panel-overlay';
+        overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+        const box = document.createElement('div');
+        box.className = 'tx-panel-box tx-cmdk-box';
+
+        const inputWrap = document.createElement('div');
+        inputWrap.className = 'tx-cmdk-input-wrap';
+        const input = document.createElement('input');
+        input.className = 'tx-cmdk-input';
+        input.type = 'text';
+        input.placeholder = 'دوّر على أي زرار أو أمر... (اكتب واختار بالسهم + Enter)';
+        inputWrap.appendChild(input);
+
+        const list = document.createElement('div');
+        list.className = 'tx-cmdk-list';
+
+        let activeIndex = 0;
+        let filtered = allEntries;
+        let itemElements = [];
+
+        // (v24.0) قبل كده render() كانت بتمسح كل الـDOM (innerHTML = '') وتبنيه من جديد مع كل ضغطة
+        // سهم أو حتى كل مرة الماوس يعدي فوق عنصر - وده كان بيصفّر سكرول القائمة لفوق تلقائي كل مرة
+        // (المتصفح بيصفّر scrollTop لما تمسح محتوى عنصر) فكان شكله "بيحدد بس مش بيتحرك السكرول معاه"،
+        // وكمان بيسبب و ميض غريب تحت الماوس وهي واقفة في مكانها. دلوقتي البناء الكامل بيحصل مرة واحدة
+        // بس (أول ما تفتح القائمة أو لما نتيجة البحث تتغيّر)، وتغيير التحديد (سواء بالسهم أو بالماوس)
+        // بيغيّر كلاس العنصر النشط بس من غير ما يلمس باقي الـDOM، فالسكرول بتاع المتصفح فعلياً بيفضل
+        // زي ما هو.
+        function render() {
+            list.innerHTML = '';
+            itemElements = [];
+            if (filtered.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'tx-cmdk-empty';
+                empty.textContent = 'مفيش نتائج مطابقة 🤷';
+                list.appendChild(empty);
+                return;
+            }
+            filtered.forEach((entry, i) => {
+                const item = document.createElement('div');
+                item.className = 'tx-cmdk-item' + (i === activeIndex ? ' tx-cmdk-active' : '');
+                item.textContent = entry.label;
+                item.onmouseenter = () => setActiveIndex(i, false);
+                item.onclick = () => run(entry);
+                list.appendChild(item);
+                itemElements.push(item);
+            });
+        }
+
+        function setActiveIndex(i, shouldScroll) {
+            if (itemElements[activeIndex]) itemElements[activeIndex].classList.remove('tx-cmdk-active');
+            activeIndex = i;
+            const el = itemElements[activeIndex];
+            if (el) {
+                el.classList.add('tx-cmdk-active');
+                if (shouldScroll) el.scrollIntoView({ block: 'nearest' });
+            }
+        }
+
+        function run(entry) {
+            close();
+            entry.run();
+        }
+
+        function close() {
+            overlay.remove();
+            document.removeEventListener('keydown', keyHandler, true);
+        }
+
+        function keyHandler(e) {
+            if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+            if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIndex(Math.min(activeIndex + 1, filtered.length - 1), true); return; }
+            if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIndex(Math.max(activeIndex - 1, 0), true); return; }
+            if (e.key === 'Enter') { e.preventDefault(); if (filtered[activeIndex]) run(filtered[activeIndex]); return; }
+        }
+
+        input.addEventListener('input', () => {
+            const q = input.value.trim().toLowerCase();
+            filtered = q ? allEntries.filter(e => e.label.toLowerCase().includes(q)) : allEntries;
+            activeIndex = 0;
+            render();
+        });
+        document.addEventListener('keydown', keyHandler, true);
+
+        render();
+        box.appendChild(inputWrap);
+        box.appendChild(list);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        setTimeout(() => input.focus(), 30);
     }
 
     // ==================== نقطة الحفظ التلقائي (Smart Auto-Save Indicator) (v12.0) ====================
@@ -3482,6 +3811,54 @@
 
     // بيرجع خطوة واحدة بس للخلف - لو كانت العملية اللي قبلها كانت جماعية (لصق/تصليح تلقائي) هترجع كلها مرة واحدة،
     // ولو كانت تعديل يدوي واحد هترجع هو بس. اضغط تاني عشان ترجع اللي قبلها، وهكذا بالظبط زي ما طلبت.
+    // ==================== (v22.0) تسجيل تغييرات تاج الـ Attribute في نفس عداد التراجع/الإعادة ====================
+    // ملحوظة مهمة: تاج الـAttribute (Alt+1/2/3/4/X) مش زي كتابة عادية في textarea - هو "پيل" منفصل
+    // جوه الصف بيتحدث عن طريق كليك على خيار في بانل الموقع، فمش بيطلق حدث input، وبالتالي عداد
+    // التراجع القديم (اللي بيسمع بس لـinput جوه الجدول) مكانش بيسجله خالص - يعني Ctrl+Z مكانش بيرجع
+    // تغيير التاج. دلوقتي كل تطبيق/شيل تاج بيتسجل كخطوة تراجع مستقلة بنفس آلية toggle الكليك.
+    function findRowBySerial(serial) {
+        const rows = document.querySelectorAll('#changyuliu_table > tr');
+        for (const row of rows) {
+            const serialCell = row.querySelector('.number');
+            if (!serialCell) continue;
+            if (parseInt(serialCell.textContent.trim(), 10) === serial) return row;
+        }
+        return null;
+    }
+
+    // بيوصل حالة تاج السيجمنت (rowSerial) لمجموعة التاجات المطلوبة (desiredTags) عن طريق نفس آلية
+    // الـtoggle: بيشيل أي تاج موجود مش في desiredTags، وبيضيف أي تاج في desiredTags مش موجود بالفعل.
+    async function setRowAttrTagState(serial, desiredTags) {
+        const row = findRowBySerial(serial);
+        if (!row) {
+            showToast('السيجمنت ده مش ظاهر دلوقتي فمعرفتش أرجّع تاجه - افتح صفحته وحاول Ctrl+Z تاني', true);
+            return false;
+        }
+        const current = getRowInfo(row).attrTagTexts.filter(Boolean);
+        const toRemove = current.filter(t => !desiredTags.includes(t));
+        const toAdd = desiredTags.filter(t => !current.includes(t));
+
+        toRemove.forEach(t => {
+            const match = pickBestTagOption(findAttrTagOptions(t, row), row);
+            if (match) match.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        });
+        if (toRemove.length > 0 && toAdd.length > 0) await sleep(120);
+        toAdd.forEach(t => {
+            const match = pickBestTagOption(findAttrTagOptions(t, row), row);
+            if (match) match.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        });
+        return true;
+    }
+
+    function pushTagUndoStep(serial, before, after, label) {
+        // لو مفيش فرق فعلي (نادر) متسجلش خطوة فاضية
+        if (before.length === after.length && before.every(t => after.includes(t))) return;
+        undoStack.push({ tagAction: true, serial, before, after, label });
+        if (undoStack.length > 150) undoStack.shift();
+        redoStack.length = 0;
+        updateUndoRedoButtons();
+    }
+
     async function undoLastEdit() {
         if (undoStack.length === 0) { showToast('مفيش تعديلات نرجع فيها', true); return; }
         const action = undoStack.pop();
@@ -3490,7 +3867,10 @@
 
         isApplyingUndoRedo = true;
         try {
-            if (action.batch) {
+            if (action.tagAction) {
+                const ok = await setRowAttrTagState(action.serial, action.before);
+                if (ok) showToast('تم التراجع عن ' + action.label + ' ↩️');
+            } else if (action.batch) {
                 const serialsSet = new Set(action.changes.map(c => c.serial));
                 const valueMap = new Map(action.changes.map(c => [c.serial, c.oldValue]));
                 await fixSegmentsBySerial(serialsSet, (raw, serial) => valueMap.has(serial) ? valueMap.get(serial) : raw);
@@ -3518,7 +3898,10 @@
 
         isApplyingUndoRedo = true;
         try {
-            if (action.batch) {
+            if (action.tagAction) {
+                const ok = await setRowAttrTagState(action.serial, action.after);
+                if (ok) showToast('تم إعادة ' + action.label + ' ↪️');
+            } else if (action.batch) {
                 const serialsSet = new Set(action.changes.map(c => c.serial));
                 const valueMap = new Map(action.changes.map(c => [c.serial, c.newValue]));
                 await fixSegmentsBySerial(serialsSet, (raw, serial) => valueMap.has(serial) ? valueMap.get(serial) : raw);
@@ -3724,21 +4107,101 @@
     }
     startEditTrackingObserver();
 
+    // ==================== إدارة مساحة التخزين المحلية (localStorage) (v23.0) ====================
+    // كل الـkeys بتاعة الأداة مبدوءة بـ'tx_' (BACKUP_KEY، DAILY_STATS_KEY، REVIEW_CACHE_KEY، إلخ) -
+    // قبل كده كل نداءات localStorage.setItem كانت لفّة try/catch بتـ"تجاهل" الخطأ بصمت، فلو المساحة
+    // (5-10 ميجا حسب المتصفح) قربت تخلص، كان أي حفظ (باك أب، QA cache) ممكن يفشل من غير ما تعرف خالص.
+    // هنا بنعمل: (1) تقدير تقريبي لحجم بيانات الأداة، (2) كاشات "قابلة لإعادة الإنشاء" (مش بيانات
+    // أصلية - القيمة بتتحسب تاني من الصفحة) بنمسحها الأول لو المساحة قربت تخلص، (3) كتابة آمنة
+    // (txSafeSetItem) بتحاول تنضف وتعيد المحاولة قبل ما تسيب المستخدم من غير تحذير حقيقي.
+    const TX_STORAGE_PREFIX = 'tx_';
+
+    function txStorageUsageBytes() {
+        let total = 0;
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (!key || !key.startsWith(TX_STORAGE_PREFIX)) continue;
+                const value = localStorage.getItem(key) || '';
+                total += (key.length + value.length) * 2; // تقريب: UTF-16 تقريباً 2 بايت للحرف، كفاية لغرض التحذير/التنظيف
+            }
+        } catch (e) { /* تجاهل */ }
+        return total;
+    }
+
+    function showTxStorageUsageToast() {
+        const kb = Math.round(txStorageUsageBytes() / 1024);
+        showToast('مساحة التخزين المستخدمة من الأداة دلوقتي: تقريباً ' + kb + ' كيلوبايت 📊');
+    }
+
+    // الكاشات دي "قابلة لإعادة الإنشاء" بالكامل (بتتبني تاني من الصفحة أول ما تحتاجها) - مش بيانات
+    // أصلية زي الباك أب أو إحصائية اليوم أو مؤقّت التاسك، فآمنين نمسحها أول ما المساحة تقرب تخلص.
+    const TX_REGENERABLE_CACHE_KEYS = ['tx_last_review_cache_v1', 'tx_qa_report_cache_v1', 'tx_qa_tag_problems_v1'];
+
+    function pruneRegenerableTxCaches() {
+        let cleared = 0;
+        TX_REGENERABLE_CACHE_KEYS.forEach(key => {
+            try {
+                if (localStorage.getItem(key) !== null) {
+                    localStorage.removeItem(key);
+                    cleared++;
+                }
+            } catch (e) { /* تجاهل */ }
+        });
+        return cleared;
+    }
+
+    function runTxStorageCleanup(manual) {
+        const before = txStorageUsageBytes();
+        const cleared = pruneRegenerableTxCaches();
+        const after = txStorageUsageBytes();
+        const freedKb = Math.max(0, Math.round((before - after) / 1024));
+        if (manual) {
+            showToast(cleared > 0
+                ? 'تم تنظيف كاشات قابلة لإعادة الإنشاء وفضّينا تقريباً ' + freedKb + ' كيلوبايت 🧹'
+                : 'مفيش حاجة محتاجة تنظيف دلوقتي - المساحة المستخدمة تقريباً ' + Math.round(after / 1024) + ' كيلوبايت ✅');
+        }
+        return freedKb;
+    }
+
+    // كتابة آمنة لأي مفتاح tx_: محاولة عادية، فلو فشلت (QuotaExceededError مثلاً) بننضف الكاشات
+    // القابلة لإعادة الإنشاء ونحاول تاني مرة واحدة بس - ولو لسه فاشلة، بنوري تحذير حقيقي للمستخدم
+    // بدل الفشل الصامت اللي كان موجود قبل كده في كل try/catch.
+    function txSafeSetItem(key, value) {
+        try {
+            localStorage.setItem(key, value);
+            return true;
+        } catch (e) {
+            pruneRegenerableTxCaches();
+            try {
+                localStorage.setItem(key, value);
+                return true;
+            } catch (e2) {
+                showToast('⚠️ مساحة التخزين المحلية (localStorage) خلصت - بيانات زي النسخة الاحتياطية ممكن متتحفظش. جرّب تفضّي مساحة من إعدادات المتصفح.', true, 5000);
+                console.warn('[Storage] فشل الحفظ حتى بعد التنظيف:', e2);
+                return false;
+            }
+        }
+    }
+
+    // فحص دوري (كل 5 دقايق): لو المساحة المستخدمة قربت من حد آمن (~4 ميجا)، ننضف الكاشات القابلة
+    // لإعادة الإنشاء استباقياً قبل ما أي حفظ يفشل فعلاً - بدل ما نستنى الفشل يحصل الأول.
+    const TX_STORAGE_SAFE_THRESHOLD_BYTES = 4 * 1024 * 1024;
+    setInterval(() => {
+        if (txStorageUsageBytes() > TX_STORAGE_SAFE_THRESHOLD_BYTES) runTxStorageCleanup(false);
+    }, 5 * 60000);
+
     // ==================== الجزء 9: الحفظ الاحتياطي التلقائي (Auto-Recovery Backup) (v11.0) ====================
     const BACKUP_KEY = 'tx_auto_backup_v1';
     let backupData = {};
 
     function persistBackup() {
         if (Object.keys(backupData).length === 0) return;
-        try {
-            localStorage.setItem(BACKUP_KEY, JSON.stringify({
-                timestamp: Date.now(),
-                url: location.href,
-                data: backupData
-            }));
-        } catch (e) {
-            console.warn('[Backup] فشل حفظ النسخة الاحتياطية:', e);
-        }
+        txSafeSetItem(BACKUP_KEY, JSON.stringify({
+            timestamp: Date.now(),
+            url: location.href,
+            data: backupData
+        }));
     }
 
     function loadExistingBackup() {
@@ -3824,7 +4287,7 @@
         const today = getTodayKey();
         if (!data || data.date !== today) {
             data = { date: today, segmentsEdited: 0, speechSeconds: 0, tagSeconds: 0, tasksFinished: 0, workedSeconds: 0 };
-            try { localStorage.setItem(DAILY_STATS_KEY, JSON.stringify(data)); } catch (e) { /* تجاهل */ }
+            txSafeSetItem(DAILY_STATS_KEY, JSON.stringify(data));
         }
         if (typeof data.tasksFinished !== 'number') data.tasksFinished = 0;
         if (typeof data.workedSeconds !== 'number') data.workedSeconds = 0;
@@ -3832,7 +4295,7 @@
     }
 
     function saveDailyStats(data) {
-        try { localStorage.setItem(DAILY_STATS_KEY, JSON.stringify(data)); } catch (e) { /* تجاهل */ }
+        txSafeSetItem(DAILY_STATS_KEY, JSON.stringify(data));
     }
 
     // بيصفّر إحصائية اليوم بالكامل ويبدأ من الصفر تاني (مستخدم من زرار "🔄 تصفير الأرقام" جوه لوحة الإحصائية)
@@ -3968,15 +4431,11 @@
     const REVIEW_CACHE_KEY = 'tx_last_review_cache_v1';
 
     function cacheReviewTabs(tabs) {
-        try {
-            const serializableTabs = tabs.map(t => ({
-                id: t.id, label: t.label, sections: t.sections,
-                emptyMessage: t.emptyMessage, excludeFromTotal: !!t.excludeFromTotal
-            }));
-            localStorage.setItem(REVIEW_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), url: location.href, tabs: serializableTabs }));
-        } catch (e) {
-            console.warn('[ReviewCache] فشل حفظ نتيجة الفحص الشامل:', e);
-        }
+        const serializableTabs = tabs.map(t => ({
+            id: t.id, label: t.label, sections: t.sections,
+            emptyMessage: t.emptyMessage, excludeFromTotal: !!t.excludeFromTotal
+        }));
+        txSafeSetItem(REVIEW_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), url: location.href, tabs: serializableTabs }));
     }
 
     function loadCachedReview() {
@@ -4045,7 +4504,7 @@
     const qaBaseline = loadQABaselineFromStorage(); // serial(string) -> النص الأصلي قبل أول تعديل في التاسك ده
 
     function persistQABaseline() {
-        try { localStorage.setItem(QA_BASELINE_KEY, JSON.stringify({ url: location.href, baseline: qaBaseline })); } catch (e) { /* تجاهل */ }
+        txSafeSetItem(QA_BASELINE_KEY, JSON.stringify({ url: location.href, baseline: qaBaseline }));
     }
 
     function recordQABaselineIfNeeded(serial, originalValue) {
@@ -4067,13 +4526,11 @@
     const QA_TAG_PROBLEMS_KEY = 'tx_qa_tag_problems_v1';
 
     function cacheQATagProblems(missingAttrTags, shortDurationTags) {
-        try {
-            localStorage.setItem(QA_TAG_PROBLEMS_KEY, JSON.stringify({
-                url: location.href,
-                missingAttrTags: missingAttrTags || [],
-                shortDurationTags: (shortDurationTags || []).map(i => ({ serial: i.serial, duration: i.duration }))
-            }));
-        } catch (e) { /* تجاهل */ }
+        txSafeSetItem(QA_TAG_PROBLEMS_KEY, JSON.stringify({
+            url: location.href,
+            missingAttrTags: missingAttrTags || [],
+            shortDurationTags: (shortDurationTags || []).map(i => ({ serial: i.serial, duration: i.duration }))
+        }));
     }
 
     function loadQATagProblemsFromStorage() {
@@ -4244,7 +4701,7 @@
     }
 
     function cacheQAReportData(segmentReports) {
-        try { localStorage.setItem(QA_REPORT_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), reports: segmentReports })); } catch (e) { /* تجاهل */ }
+        txSafeSetItem(QA_REPORT_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), reports: segmentReports }));
     }
 
     function loadCachedQAReport() {
@@ -5254,6 +5711,7 @@
         addErrorNavWidget();
         addHelpButton();
         addTaskTimerWidget();
+        addLiveAutoFixToggleButton();
         hookSiteSaveButton();
 
         // بتتنفذ فورًا (من غير setTimeout) عشان الأزرار متتلمّش مبعثرة ولا لحظة واحدة قبل ما تتجمع
@@ -5340,6 +5798,151 @@
         }
     }
 
+    // ==================== إصلاح تلقائي أثناء الكتابة (Live Auto-Fix) (v23.0) ====================
+    // الفحص الحي بيكتشف المشاكل بس مش بيصلحها - لازم تروح تدوس على زرار "فحص قواعد الكتابة" يدوي
+    // عشان يصلحها، حتى لو دالة autoFixWritingIssues جاهزة أصلاً ومستخدمة في المراجعة الشاملة وفي
+    // الزرار اليدوي. هنا بنستخدم نفس الدالة بالظبط بشكل عملي: بعد ما تسيب الكتابة في السيجمنت لحظة
+    // (Debounce، مش على كل حرف عشان منقطعش عليك وانت لسه بتكتب) بنطبّقها تلقائي، ونحافظ على مكان
+    // المؤشر (Cursor) بمقارنة النص القديم بالجديد (أطول جزء مشترك في الأول والآخر) عشان الكتابة
+    // متتقطعش أو المؤشر يقفز مكان غلط. فيه Toggle لإيقافه (جوه Command Palette، Alt+K).
+    let liveAutoFixEnabled = true;
+    let liveAutoFixToggleBtnRef = null;
+
+    // (v24.0) ودجت ثابتة طول الوقت (زي بالظبط زرار المساعدة وودجت التايمر) بتوري حالة الإصلاح
+    // التلقائي بصرياً (أخضر = شغال، رمادي = متوقف) وتقدر تبدّل حالتها بضغطة واحدة - قبل كده كان
+    // التبديل بس بيحصل من جوه Command Palette (Alt+K) وبتوست بيختفي، فمكنش فيه أي طريقة تتأكد
+    // بالعين إنها شغالة ولا لأ من غير ما تفتح القائمة كل مرة. اتحطت فوق زرار المساعدة بنفس
+    // المسافة اللي بين زرار المساعدة وودجت التايمر (44px بين كل ودجت والتانية).
+    function ensureLiveAutoFixToggleStyles() {
+        if (document.getElementById('tx-live-toggle-style')) return;
+        const style = document.createElement('style');
+        style.id = 'tx-live-toggle-style';
+        style.textContent = `
+            .tx-live-toggle-widget {
+                position: fixed; top: 516px; left: 6px; z-index: 99996;
+                display: flex; align-items: center; gap: 7px;
+                background: rgba(14,20,14,0.55);
+                border: 1px solid rgba(74,222,128,0.4);
+                border-radius: 22px;
+                padding: 6px 12px 6px 8px;
+                backdrop-filter: blur(10px) saturate(160%);
+                -webkit-backdrop-filter: blur(10px) saturate(160%);
+                color: #bbf7d0; font-weight: 800; font-size: 12.5px;
+                font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+                cursor: pointer; user-select: none;
+                text-shadow: 0 0 8px rgba(74,222,128,0.4);
+                box-shadow: 0 3px 10px rgba(0,0,0,0.3), 0 0 10px rgba(74,222,128,0.22);
+                transform: translateX(-14px);
+                transition: transform 0.32s cubic-bezier(0.4,0,0.2,1), box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease, color 0.25s ease;
+            }
+            .tx-live-toggle-widget:hover {
+                transform: translateX(0);
+                box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 18px rgba(74,222,128,0.45);
+                border-color: rgba(74,222,128,0.7);
+            }
+            .tx-live-toggle-widget .tx-live-toggle-icon {
+                display: flex; align-items: center; justify-content: center;
+                width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+                background: rgba(74,222,128,0.16); border: 1px solid rgba(74,222,128,0.5);
+                font-size: 11px; font-weight: 900;
+            }
+            .tx-live-toggle-widget.tx-live-off {
+                border-color: rgba(148,163,184,0.35);
+                color: #cbd5e1;
+                text-shadow: none;
+                box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+            }
+            .tx-live-toggle-widget.tx-live-off .tx-live-toggle-icon {
+                background: rgba(148,163,184,0.12); border-color: rgba(148,163,184,0.4);
+            }
+            .tx-live-toggle-widget.tx-live-off:hover {
+                box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+                border-color: rgba(148,163,184,0.6);
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function updateLiveAutoFixToggleUI() {
+        const btn = liveAutoFixToggleBtnRef;
+        if (!btn) return;
+        const icon = btn.querySelector('.tx-live-toggle-icon');
+        const label = btn.querySelector('.tx-live-toggle-label');
+        if (icon) icon.textContent = liveAutoFixEnabled ? '✓' : '✕';
+        if (label) label.textContent = 'إصلاح تلقائي: ' + (liveAutoFixEnabled ? 'شغال' : 'متوقف');
+        btn.classList.toggle('tx-live-off', !liveAutoFixEnabled);
+        btn.title = liveAutoFixEnabled
+            ? 'الإصلاح التلقائي أثناء الكتابة شغال - دوس عشان توقفه'
+            : 'الإصلاح التلقائي أثناء الكتابة متوقف - دوس عشان تشغّله';
+    }
+
+    function addLiveAutoFixToggleButton() {
+        ensureLiveAutoFixToggleStyles();
+        const btn = document.createElement('div');
+        btn.className = 'tx-live-toggle-widget';
+        liveAutoFixToggleBtnRef = btn;
+
+        const icon = document.createElement('span');
+        icon.className = 'tx-live-toggle-icon';
+
+        const label = document.createElement('span');
+        label.className = 'tx-live-toggle-label';
+
+        btn.appendChild(icon);
+        btn.appendChild(label);
+        btn.onclick = () => toggleLiveAutoFix();
+        document.body.appendChild(btn);
+
+        updateLiveAutoFixToggleUI();
+    }
+
+    function toggleLiveAutoFix() {
+        liveAutoFixEnabled = !liveAutoFixEnabled;
+        showToast(liveAutoFixEnabled ? 'الإصلاح التلقائي أثناء الكتابة شغال ✅' : 'الإصلاح التلقائي أثناء الكتابة متوقف ⏸️');
+        updateLiveAutoFixToggleUI();
+    }
+
+    const liveAutoFixTimers = new WeakMap();
+    const LIVE_AUTO_FIX_DELAY_MS = 700;
+
+    function computeCursorAfterFix(oldValue, newValue, oldCursor) {
+        let prefixLen = 0;
+        const maxPrefix = Math.min(oldValue.length, newValue.length, oldCursor);
+        while (prefixLen < maxPrefix && oldValue[prefixLen] === newValue[prefixLen]) prefixLen++;
+
+        let suffixLen = 0;
+        const maxSuffix = Math.min(oldValue.length - prefixLen, newValue.length - prefixLen);
+        while (
+            suffixLen < maxSuffix &&
+            oldValue[oldValue.length - 1 - suffixLen] === newValue[newValue.length - 1 - suffixLen]
+        ) suffixLen++;
+
+        if (oldCursor <= prefixLen) return oldCursor;
+        if (oldCursor >= oldValue.length - suffixLen) return newValue.length - (oldValue.length - oldCursor);
+        return prefixLen; // المؤشر كان جوه الجزء اللي اتغيّر - أأمن تخمين إنه يترّكن عند بداية التغيير
+    }
+
+    function scheduleLiveAutoFix(row, textarea) {
+        if (!liveAutoFixEnabled) return;
+        if (liveAutoFixTimers.has(textarea)) clearTimeout(liveAutoFixTimers.get(textarea));
+        const timer = setTimeout(() => {
+            liveAutoFixTimers.delete(textarea);
+            if (document.activeElement !== textarea) return; // متبقاش تصلح سيجمنت مش بتكتب فيه دلوقتي
+            const before = textarea.value !== undefined ? textarea.value : textarea.textContent;
+            if (!before) return;
+            // متلمسش النص لو شكله تاج (زي <NOISE>) - ده مقصود ومش المفروض autoFixWritingIssues تلمسه
+            if (/^<[A-Za-z]+>$/.test(before.trim())) return;
+            const after = autoFixWritingIssues(before);
+            if (after === before) return;
+            const oldCursor = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : before.length;
+            setNativeFieldValue(textarea, after);
+            const newCursor = computeCursorAfterFix(before, after, oldCursor);
+            try { textarea.selectionStart = textarea.selectionEnd = newCursor; } catch (e) { /* تجاهل */ }
+            if (row) evaluateRowLive(row);
+        }, LIVE_AUTO_FIX_DELAY_MS);
+        liveAutoFixTimers.set(textarea, timer);
+    }
+
     function initLiveChecker() {
         const table = document.querySelector('#changyuliu_table');
         if (!table) return false;
@@ -5348,6 +5951,9 @@
         table.addEventListener('input', (e) => {
             const row = e.target.closest('tr');
             if (row) evaluateRowLive(row);
+            if (row && e.target.classList && e.target.classList.contains('mark-content-textarea')) {
+                scheduleLiveAutoFix(row, e.target);
+            }
         }, true);
 
         const observer = new MutationObserver((mutations) => {
@@ -5475,7 +6081,7 @@
         { title: '⚠️ عداد الأخطاء (Alt+↓ / Alt+↑)', short: 'بينقّلك بين السيجمنتات اللي فيها مشاكل من آخر فحص شامل، سيجمنت بسيجمنت.', full: 'بعد أي "🚀 مراجعة شاملة"، الودجت ده بيوريك عدد المشاكل المتبقية، وبيخليك تتنقل بينها بسهولة بالكيبورد من غير ما تدور في الجدول يدوي - وكل ما تصلح مشكلة، بتختفي من العداد لايف.' },
         { title: '📋 حافظة النصوص المتعددة (Clipboard Ring)', short: 'الأداة بتفتكر آخر 10 حاجات نسختها في الصفحة، وتقدر تلزقها بسهولة بـ Ctrl+Shift+V أو Alt+V.', full: 'وأنت جوه أي مربع كتابة، دوس Ctrl+Shift+V أو Alt+V يظهرلك منيو صغير تحت الماوس فيه آخر 10 حاجات نسختها (أسامي متحدثين، تاجات، جمل متكررة...) - تختار بالسهم لفوق/تحت وتدوس Enter، أو تدوس عليها بالماوس، وتتلزق فوراً في مكان الكتابة.' },
         { title: '💾 الحفظ التلقائي (Auto-Save)', short: 'الأداة بتدوس هي نفسها على زرار Save الأصلي كل 60 ثانية - متقلقش، شغلك محفوظ ليك.', full: 'عشان ميضيع عليك شغل لو النور قطع أو حصلت مشكلة، الأداة بتحفظ التاسك تلقائياً كل دقيقة من غير ما تحتاج تدوس Save بنفسك كل شوية. لسه محتاج تدوس Save أو Submit بنفسك وانت فعلاً خلصت التاسك عشان تسلّمه رسمياً.' },
-        { title: '😌 منبه الراحة', short: 'بعد كل ساعتين شغل متواصل، هتلاقي تنبيه هادي يفكّرك ترّيح عينك أو تعمل Stretch لمدة 10 دقايق.', full: 'التركيز في التشكيل والتاجات لساعات طويلة بيتعب العين والدماغ - الأداة بتحسب لك الوقت وتظهرلك تنبيه بسيط وهادي (بالعامية) كل ساعتين شغل تقريبي، وبعدها بتصفّر العداد وتبدأ تحسب لساعتين جداد.' }
+        { title: '😌 منبه الراحة', short: 'بعد فترة شغل متواصل (قابلة للتعديل: نص ساعة/ساعة/ساعتين)، هتلاقي تنبيه هادي يفكّرك ترّيح عينك أو تعمل Stretch لمدة 10 دقايق.', full: 'التركيز في التشكيل والتاجات لساعات طويلة بيتعب العين والدماغ - الأداة بتحسب لك الوقت وتظهرلك تنبيه بسيط وهادي (بالعامية) بعد فترة عمل متواصل، وبعدها بتصفّر العداد وتبدأ تحسب من جديد. اضغط ⚙️ جوه التنبيه نفسه عشان تغيّر المدة (نص ساعة / ساعة / ساعتين) وهتفضل محفوظة زي ما اخترتها.' }
     ];
 
     function buildShortcutsTabContent() {
@@ -5488,7 +6094,14 @@
             { desc: '↩️ تراجع خطوة', key: 'Ctrl+Z' },
             { desc: '↪️ إعادة', key: 'Ctrl+Y / Ctrl+Shift+Z' },
             { desc: '📋 حافظة النصوص المتعددة', key: 'Ctrl+Shift+V / Alt+V' },
-            { desc: 'التنقل بين الأخطاء', key: 'Alt+↓ / Alt+↑' }
+            { desc: 'التنقل بين الأخطاء', key: 'Alt+↓ / Alt+↑' },
+            { desc: 'إضافة تاج <NOISE> للسيجمنت', key: 'Alt+1' },
+            { desc: 'إضافة تاج <DEAF> للسيجمنت', key: 'Alt+2' },
+            { desc: 'إضافة تاج <OOV> للسيجمنت', key: 'Alt+3' },
+            { desc: 'إضافة تاج <OVERLAP> للسيجمنت', key: 'Alt+4' },
+            { desc: '🗑️ شيل أي تاج من السيجمنت (وكمان أي تاج مكتوب كنص زي <DEAF>)', key: 'Alt+X' },
+            { desc: '❔ فتح قائمة الاختصارات دي', key: 'Ctrl+/' },
+            { desc: '🔎 فتح Command Palette (كل الأزرار في مكان واحد)', key: 'Alt+K' }
         ];
         const wrap = document.createElement('div');
         rows.forEach(r => {
@@ -5693,12 +6306,10 @@
     }
 
     function writeTaskTimerState() {
-        try {
-            localStorage.setItem(TASK_TIMER_KEY, JSON.stringify({
-                url: location.href, start: taskTimerStart,
-                pausedAccumMs: taskTimerPausedAccumMs, paused: taskTimerPaused, pausedAt: taskTimerPausedAt
-            }));
-        } catch (e) { /* تجاهل */ }
+        txSafeSetItem(TASK_TIMER_KEY, JSON.stringify({
+            url: location.href, start: taskTimerStart,
+            pausedAccumMs: taskTimerPausedAccumMs, paused: taskTimerPaused, pausedAt: taskTimerPausedAt
+        }));
     }
 
     const _existingTimerState = readTaskTimerState();
@@ -5831,6 +6442,23 @@
                 60% { box-shadow: 0 0 30px 6px rgba(45,212,191,0.55); }
                 100% { box-shadow: 0 3px 10px rgba(0,0,0,0.3), 0 0 8px rgba(0,255,204,0.14); border-color: rgba(45,212,191,0.28); }
             }
+            /* (v22.0) نقطة صغيرة بتفضل هادية/شفافة طول ما الأوتو سيف شغال عادي، وبتتحول لحمرا نابضة
+               بس لو الأداة فشلت تلاقي/تدوس زرار Save الأصلي كذا مرة ورا بعض (يعني غالباً شكل الموقع
+               اتغيّر أو حصلت مشكلة اتصال) - عشان تاخد بالك قبل ما تخسر شغل بدل ما تكتشف متأخر. */
+            .tx-save-status-dot {
+                width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+                background: rgba(148,163,184,0.35); margin-inline-start: 2px;
+                transition: background 0.2s ease, box-shadow 0.2s ease;
+            }
+            .tx-save-status-dot.tx-save-status-warn {
+                background: #f87171;
+                box-shadow: 0 0 6px rgba(248,113,113,0.9), 0 0 12px rgba(248,113,113,0.5);
+                animation: tx-save-status-pulse 1.2s ease-in-out infinite;
+            }
+            @keyframes tx-save-status-pulse {
+                0%, 100% { opacity: 1; transform: scale(1); }
+                50% { opacity: 0.35; transform: scale(0.75); }
+            }
         `;
         document.head.appendChild(style);
     }
@@ -5878,10 +6506,16 @@
             if (ok) resetTaskTimer();
         };
 
+        const saveStatusDot = document.createElement('span');
+        saveStatusDot.id = 'tx-autosave-status-dot';
+        saveStatusDot.className = 'tx-save-status-dot';
+        saveStatusDot.title = 'الحفظ التلقائي شغال تمام ✅';
+
         widget.appendChild(dot);
         widget.appendChild(text);
         widget.appendChild(pauseBtn);
         widget.appendChild(resetBtn);
+        widget.appendChild(saveStatusDot);
         document.body.appendChild(widget);
 
         // الضغط على الودجت نفسه (مش على ⏸ أو 🔄) بيفرده/يطويه لمن مش بتعمل هوفر بالماوس (شاشات اللمس مثلاً)
@@ -5896,12 +6530,38 @@
     }
 
     // ==================== منبه الإجهاد (Break / Stretch Reminder) ====================
-    // كل ساعتين شغل متواصل تقريباً، بيظهر تنبيه هادي وحلو (بالعامية) يفكّرك تريّح عينك أو تعمل Stretch
-    // لمدة 10 دقايق. الوقت محفوظ في localStorage عشان يفضل شغال حتى لو عملت Refresh للصفحة.
+    // كل فترة شغل متواصل، بيظهر تنبيه هادي وحلو (بالعامية) يفكّرك تريّح عينك أو تعمل Stretch لمدة
+    // 10 دقايق. الوقت محفوظ في localStorage عشان يفضل شغال حتى لو عملت Refresh للصفحة.
     // مهم: العداد بيحسب بس الوقت اللي التاب فاتح وظاهر فعلاً قدامك (مش مقفول في تاب تاني بالخلفية)،
     // عشان "ساعتين شغل" تبقى ساعتين شغل حقيقي مش ساعتين حتى لو سايب التاب مقفول جنب.
+    // (v22.0): الفترة كانت رقم مقفول في الكود (ساعتين بالظبط) - بقت قابلة للتعديل من زرار ⚙️ صغير
+    // جوه التنبيه نفسه: نص ساعة / ساعة / ساعتين، ومحفوظة في localStorage فتفضل زي ما اخترتها.
     const BREAK_ACTIVE_MS_KEY = 'tx_break_active_ms_v1';
-    const BREAK_INTERVAL_MS = 2 * 60 * 60 * 1000; // ساعتين
+    const BREAK_INTERVAL_MINUTES_KEY = 'tx_break_interval_minutes_v1';
+    const BREAK_INTERVAL_OPTIONS_MIN = [30, 60, 120];
+    const DEFAULT_BREAK_INTERVAL_MIN = 120;
+
+    function getBreakIntervalMinutes() {
+        try {
+            const v = parseInt(localStorage.getItem(BREAK_INTERVAL_MINUTES_KEY), 10);
+            if (BREAK_INTERVAL_OPTIONS_MIN.includes(v)) return v;
+        } catch (e) { /* تجاهل */ }
+        return DEFAULT_BREAK_INTERVAL_MIN;
+    }
+
+    function setBreakIntervalMinutes(minutes) {
+        txSafeSetItem(BREAK_INTERVAL_MINUTES_KEY, String(minutes));
+    }
+
+    function getBreakIntervalMs() {
+        return getBreakIntervalMinutes() * 60 * 1000;
+    }
+
+    function formatBreakIntervalLabel(minutes) {
+        if (minutes === 30) return 'نص ساعة';
+        if (minutes === 60) return 'ساعة';
+        return 'ساعتين';
+    }
 
     function getAccumulatedActiveMs() {
         try {
@@ -5917,7 +6577,7 @@
     let accumulatedActiveMs = getAccumulatedActiveMs();
 
     function saveAccumulatedActiveMs() {
-        try { localStorage.setItem(BREAK_ACTIVE_MS_KEY, String(accumulatedActiveMs)); } catch (e) { /* تجاهل */ }
+        txSafeSetItem(BREAK_ACTIVE_MS_KEY, String(accumulatedActiveMs));
     }
 
     function resetBreakTimer() {
@@ -5953,17 +6613,56 @@
                 padding: 6px 12px; cursor: pointer; flex-shrink: 0; transition: background 0.15s ease;
             }
             .tx-break-close:hover { background: rgba(56,189,248,0.3); }
+            .tx-break-gear {
+                background: transparent; border: none; color: #94a3b8; font-size: 15px;
+                cursor: pointer; flex-shrink: 0; padding: 4px; border-radius: 8px; transition: color 0.15s ease, background 0.15s ease;
+            }
+            .tx-break-gear:hover { color: #bae6fd; background: rgba(56,189,248,0.12); }
+            .tx-break-settings {
+                display: none; align-items: center; gap: 6px; margin-inline-start: 4px;
+                padding-inline-start: 10px; border-inline-start: 1px solid rgba(255,255,255,0.12);
+            }
+            .tx-break-settings.tx-break-settings-open { display: flex; }
+            .tx-break-settings-opt {
+                background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14);
+                border-radius: 8px; color: #cbd5e1; font-size: 11px; font-weight: 600;
+                padding: 5px 9px; cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
+            }
+            .tx-break-settings-opt:hover { background: rgba(56,189,248,0.18); }
+            .tx-break-settings-opt.tx-break-settings-active {
+                background: rgba(56,189,248,0.28); color: #e0f2fe; border-color: rgba(56,189,248,0.5);
+            }
         `;
         document.head.appendChild(style);
     }
 
     const BREAK_PHRASES = [
         'يلا بينا نرّيح عينك شوية يا نجم 👀 - 10 دقايق Stretch وترجع أقوى!',
-        'ساعتين ونص تركيز! خد نفس، اتمطى، ورجع تكسّر تاني بعد 10 دقايق 💪',
+        'تركيز جامد كده! خد نفس، اتمطى، ورجع تكسّر تاني بعد 10 دقايق 💪',
         'وقفة صغيرة كده حلوة - قوم اتمشى شوية وارجع بتركيز جامد 🧘',
         'عينك تستاهل راحة دلوقتي - كوباية مية وشوية Stretch، وترجع أنشط 🥤'
     ];
     const breakPhraseState = { last: -1 };
+
+    function buildBreakSettingsRow() {
+        const row = document.createElement('div');
+        row.className = 'tx-break-settings';
+        const current = getBreakIntervalMinutes();
+        BREAK_INTERVAL_OPTIONS_MIN.forEach(minutes => {
+            const opt = document.createElement('div');
+            opt.className = 'tx-break-settings-opt' + (minutes === current ? ' tx-break-settings-active' : '');
+            opt.textContent = formatBreakIntervalLabel(minutes);
+            opt.onclick = () => {
+                setBreakIntervalMinutes(minutes);
+                resetBreakTimer(); // نبدأ العداد من جديد بالفترة الجديدة عشان مايحصلش تنبيه فوري غلط
+                row.querySelectorAll('.tx-break-settings-opt').forEach(o => o.classList.remove('tx-break-settings-active'));
+                opt.classList.add('tx-break-settings-active');
+                showToast('منبه الراحة دلوقتي كل ' + formatBreakIntervalLabel(minutes) + ' 👌');
+            };
+            row.appendChild(opt);
+        });
+        return row;
+    }
 
     function showBreakReminderBanner() {
         ensureBreakReminderStyles();
@@ -5980,6 +6679,15 @@
         text.className = 'tx-break-text';
         text.textContent = pickRandomNoRepeat(BREAK_PHRASES, breakPhraseState);
 
+        const settingsRow = buildBreakSettingsRow();
+
+        const gearBtn = document.createElement('button');
+        gearBtn.className = 'tx-break-gear';
+        gearBtn.type = 'button';
+        gearBtn.title = 'غيّر مدة منبه الراحة';
+        gearBtn.textContent = '⚙️';
+        gearBtn.onclick = () => settingsRow.classList.toggle('tx-break-settings-open');
+
         const closeBtn = document.createElement('div');
         closeBtn.className = 'tx-break-close';
         closeBtn.textContent = 'تمام 👌';
@@ -5990,11 +6698,15 @@
 
         banner.appendChild(emoji);
         banner.appendChild(text);
+        banner.appendChild(gearBtn);
+        banner.appendChild(settingsRow);
         banner.appendChild(closeBtn);
         document.body.appendChild(banner);
 
         requestAnimationFrame(() => banner.classList.add('tx-break-show'));
+        // لو فتحت لوحة الإعدادات، منسيبش البانر يختفي من تحتك - نمدد وقت الاختفاء التلقائي طول ما فاتحها
         setTimeout(() => {
+            if (settingsRow.classList.contains('tx-break-settings-open')) return;
             banner.classList.remove('tx-break-show');
             setTimeout(() => banner.remove(), 350);
         }, 15000);
@@ -6006,7 +6718,7 @@
             accumulatedActiveMs += 60000;
             saveAccumulatedActiveMs();
         }
-        if (accumulatedActiveMs >= BREAK_INTERVAL_MS) {
+        if (accumulatedActiveMs >= getBreakIntervalMs()) {
             showBreakReminderBanner();
             resetBreakTimer();
         }
@@ -6330,7 +7042,7 @@
         document.addEventListener('click', (e) => {
             const target = e.target.closest('button, div, span, a');
             if (!target) return;
-            if (target.classList.contains('tx-tool-btn') || target.closest('#tx-floating-menu, .tx-panel-overlay')) return;
+            if (target.classList.contains('tx-tool-btn') || target.closest('#tx-floating-menu, .tx-panel-overlay, .tx-live-toggle-widget')) return;
             const txt = (target.textContent || '').trim();
             if (txt === 'Save') {
                 hasUnsavedChangesSinceLastSave = false;
@@ -6346,7 +7058,7 @@
     function findSiteSaveButton() {
         const candidates = Array.from(document.querySelectorAll('button, div, span, a')).filter(el => {
             if (el.classList.contains('tx-tool-btn')) return false;
-            if (el.closest('#tx-floating-menu, .tx-panel-overlay, #tx-timer-widget, .tx-help-btn')) return false;
+            if (el.closest('#tx-floating-menu, .tx-panel-overlay, #tx-timer-widget, .tx-help-btn, .tx-live-toggle-widget')) return false;
             const txt = (el.textContent || '').trim();
             if (txt !== 'Save') return false;
             return el.offsetParent !== null || el.getClientRects().length > 0;
@@ -6357,11 +7069,32 @@
         return candidates[0];
     }
 
+    // (v22.0) لو الأداة فشلت تلاقي زرار Save كذا مرة ورا بعض (يعني غالباً شكل صفحة الموقع اتغيّر في
+    // تحديث، أو حصلت مشكلة تانية)، بنوري نقطة حمرا صغيرة نابضة جوه ودجت المؤقت قبل ما تخسر شغل بدل
+    // ما تكتشف الموضوع متأخر. فشلة واحدة مش كافية (ممكن تكون لحظة تحميل الصفحة عادية).
+    let autoSaveConsecutiveFailures = 0;
+    const AUTO_SAVE_FAIL_THRESHOLD = 2;
+
+    function setAutoSaveStatusDot(hasIssue) {
+        const dot = document.getElementById('tx-autosave-status-dot');
+        if (!dot) return;
+        dot.classList.toggle('tx-save-status-warn', hasIssue);
+        dot.title = hasIssue
+            ? '⚠️ الأداة مش لاقية زرار Save بتاع الموقع من كذا محاولة - اعمل Save يدوي دلوقتي عشان متضيعش شغل، وممكن شكل صفحة الموقع يكون اتغيّر'
+            : 'الحفظ التلقائي شغال تمام ✅';
+    }
+
     function performAutoSave() {
         if (!hasUnsavedChangesSinceLastSave) return;
         if (!document.querySelector('#changyuliu_table')) return;
         const saveBtn = findSiteSaveButton();
-        if (!saveBtn) return;
+        if (!saveBtn) {
+            autoSaveConsecutiveFailures++;
+            if (autoSaveConsecutiveFailures >= AUTO_SAVE_FAIL_THRESHOLD) setAutoSaveStatusDot(true);
+            return;
+        }
+        autoSaveConsecutiveFailures = 0;
+        setAutoSaveStatusDot(false);
         isAutoSaveTriggeredClick = true;
         try {
             saveBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -6406,6 +7139,39 @@
                 showClipboardRingMenu(target);
                 return;
             }
+        }
+
+        // Ctrl+/ - بيفتح مركز المساعدة (على تاب اختصارات الكيبورد على طول) من أي مكان في الصفحة، حتى
+        // وانت جوه textarea السيجمنت - عشان كده قبل شرط isEditing زي باقي اختصارات التاجات.
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && isKey('Slash', '/')) {
+            e.preventDefault();
+            showHelpCenter();
+            return;
+        }
+
+        // Alt+1/2/3/4 لتطبيق تاج Attribute (NOISE/DEAF/OOV/OVERLAP)، وAlt+X لشيل أي تاج موجود خالص -
+        // لازم يشتغلوا وانت جوه textarea السيجمنت نفسها (عشان كده قبل شرط isEditing اللي بيوقف باقي
+        // الاختصارات) بس من غير ما يتعارضوا مع الكتابة العادية (Alt+رقم/حرف مش تركيبة بتتكتب بيها حروف).
+        if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && ATTR_TAG_SHORTCUTS[e.code]) {
+            e.preventDefault();
+            applyAttrTagShortcut(ATTR_TAG_SHORTCUTS[e.code]);
+            return;
+        }
+        // (v22.0) كان Alt+0 - اتغيّر لـ Alt+X لأنه أسهل على الإيد (X جنب باقي الاختصارات على الكيبورد)
+        if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && isKey('KeyX', 'x')) {
+            e.preventDefault();
+            removeAttrTagShortcut();
+            return;
+        }
+        // (v23.0) Command Palette موحّد - بيجمع كل أزرار الأداة في مكان واحد بحث نصي بدل ما تدوّر
+        // عليهم بالعين جوه القائمة العائمة. اخترنا Alt+K مش Ctrl+K عشان Ctrl+K/Ctrl+L في كروم بيودّوك
+        // لشريط العنوان (اختصار متصفح على مستوى النظام، الـpreventDefault مش بيمنعه) - وAlt+K مفيش
+        // تعارض معروف بيه لا في ويندوز ولا في كروم. لازم يشتغل وانت جوه textarea كمان (زي باقي
+        // اختصارات التاجات) عشان تقدر تفتحه من أي حتة.
+        if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && isKey('KeyK', 'k')) {
+            e.preventDefault();
+            showCommandPalette();
+            return;
         }
 
         const active = document.activeElement;

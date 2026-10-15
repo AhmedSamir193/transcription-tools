@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      29.27.0
+// @version      29.29.1
 // @match        http://123.60.141.64:10016/*
 // @grant        none
 // (v26.0) @updateURL/@downloadURL: كانوا مش موجودين خالص، فأي تحديث للسكريبت كان لازم يتنزل يدوي.
@@ -14994,6 +14994,7 @@
         tcBusy = true;
         try {
             const onAnno = isOnTargetSite();
+            if (onAnno) tcTrackWorked(); else { tcTrackId = null; tcTrackDone = null; } // (v29.28.0)
             let st = tcReadScan();
             if (st && st.active && Date.now() - (st.updatedAt || 0) > TC_STALE_MS) {
                 st.active = false; tcWriteScan(st);
@@ -15264,6 +15265,188 @@
                 color: #fff; border-radius: 8px; padding: 7px 10px; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 700; }
             .tx-tc-menuitem:hover { background: rgba(124,58,237,0.35); }
             .tx-tc-menuitem small { color: #94a3b8; font-size: 10.5px; font-weight: 600; }
+            /* ==================== (v29.27.1) تحسينات التصميم ==================== */
+            @keyframes txTcIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+            /* 6) عرض مرن بدل 900px ثابت */
+            .tx-tc-box { width: min(900px, 94vw) !important; }
+            /* 1) لون الصعوبة على الكارت كله: متغير --tc-c (RGB) بيتحكم في الحافة والتدرج والحلقة والشريط */
+            .tx-tc-card { --tc-c: 100,116,139; padding: 12px 14px; font-size: 13px; line-height: 1.6; }
+            .tx-tc-card.easy { --tc-c: 34,197,94; } .tx-tc-card.medium { --tc-c: 234,179,8; }
+            .tx-tc-card.hard { --tc-c: 239,68,68; } .tx-tc-card.ready { --tc-c: 56,189,248; }
+            .tx-tc-card.easy, .tx-tc-card.medium, .tx-tc-card.hard { background: linear-gradient(270deg, rgba(var(--tc-c),0.11), rgba(255,255,255,0.035) 48%); }
+            .tx-tc-card.easy .tx-tc-num, .tx-tc-card.medium .tx-tc-num, .tx-tc-card.hard .tx-tc-num {
+                box-shadow: 0 0 0 2px rgba(var(--tc-c),0.9), 0 2px 10px rgba(var(--tc-c),0.35); }
+            .tx-tc-head { font-size: 14px; gap: 9px; }
+            .tx-tc-badge { padding: 2px 9px; }
+            .tx-tc-list { gap: 10px; }
+            .tx-tc-list .tx-tc-card:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(0,0,0,0.4), 0 0 0 1px rgba(var(--tc-c),0.28); }
+            .tx-tc-list .tx-tc-card.dragging:hover { transform: scale(0.99); }
+            /* 2) المقاييس كـ pills + شريط الصعوبة */
+            .tx-tc-metrics { gap: 6px 8px; margin-top: 9px; font-size: 12.5px; }
+            .tx-tc-metrics > span { display: inline-flex; align-items: center; gap: 7px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.09);
+                border-radius: 999px; padding: 2px 11px; font-variant-numeric: tabular-nums; }
+            .tx-tc-bar { display: inline-block; width: 48px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.14); overflow: hidden; }
+            .tx-tc-bar > b { display: block; height: 100%; border-radius: 3px; background: rgb(var(--tc-c)); }
+            /* 3) صف الفيديو منظم + زرار التفاصيل جواه */
+            .tx-tc-vline { margin-top: 9px; gap: 8px 10px; font-variant-numeric: tabular-nums; }
+            .tx-tc-vfile { background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 3px 8px; gap: 7px; }
+            .tx-tc-vline .tx-tc-mini { padding: 3px 10px; }
+            .tx-tc-readmore { margin-top: 8px; border-color: rgba(167,139,250,0.5); color: #c4b5fd; padding: 3px 12px; font-weight: 700; transition: all .15s ease; }
+            .tx-tc-readmore:hover { background: rgba(167,139,250,0.16); color: #fff; border-color: rgba(167,139,250,0.8); }
+            .tx-tc-vline .tx-tc-readmore { margin: 0; margin-inline-start: auto; }
+            .tx-tc-more { animation: txTcIn .18s ease; }
+            /* 4 + 6) الزراير: نفس اللغة (انتقالات + hover + فوكس) وزرار فتح أساسي */
+            .tx-tc-mini { padding: 5px 12px; border-radius: 9px; white-space: nowrap; transition: background .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease, color .15s ease; }
+            .tx-tc-mini:hover { transform: translateY(-1px); border-color: rgba(167,139,250,0.55); }
+            .tx-tc-mini:active { transform: translateY(0) scale(0.97); }
+            .tx-tc-mini:focus-visible, .tx-tc-readmore:focus-visible, .tx-tc-fbtn:focus-visible, .tx-tc-menuitem:focus-visible {
+                outline: 2px solid rgba(167,139,250,0.9); outline-offset: 2px; }
+            .tx-tc-foot { margin-top: 11px; gap: 8px; }
+            .tx-tc-foot .tx-tc-mini:not(.primary) { background: transparent; color: #cbd5e1; }
+            .tx-tc-foot .tx-tc-mini:not(.primary):hover { background: rgba(124,58,237,0.3); color: #fff; }
+            .tx-tc-mini.primary { background: linear-gradient(135deg, #7c3aed, #6366f1); border-color: rgba(167,139,250,0.6); color: #fff;
+                box-shadow: 0 2px 10px rgba(124,58,237,0.4); }
+            .tx-tc-mini.primary:hover { filter: brightness(1.12); box-shadow: 0 4px 14px rgba(124,58,237,0.55); }
+            .tx-tc-note { padding: 6px 11px; border-radius: 9px; transition: border-color .15s ease, background .15s ease; }
+            .tx-tc-note:focus { background: rgba(0,0,0,0.42); }
+            /* 7) تفاصيل صغيرة: شريط الفلتر + الأقسام */
+            .tx-tc-filter { background: rgba(18,18,24,0.88); backdrop-filter: blur(12px) saturate(1.2); -webkit-backdrop-filter: blur(12px) saturate(1.2);
+                box-shadow: 0 8px 14px -10px rgba(0,0,0,0.7); }
+            .tx-tc-sec { margin-top: 16px; }
+            .tx-tc-sec:hover .chev { color: #c4b5fd; }
+            .tx-tc-anim { animation: txTcIn .22s ease; }
+            /* ==================== (v29.27.2) سحب وترتيب بحركة حقيقية ==================== */
+            .tx-tc-list { position: relative; }
+            .tx-tc-head { cursor: grab; }
+            .tx-tc-grip { padding: 4px 6px; touch-action: none; border-radius: 6px; transition: color .15s ease, background .15s ease; }
+            .tx-tc-head:hover .tx-tc-grip { background: rgba(167,139,250,0.14); }
+            .tx-tc-list.tc-sorting { user-select: none; -webkit-user-select: none; }
+            .tx-tc-list.tc-sorting .tx-tc-card:not(.tc-lifted) { transition: transform .22s cubic-bezier(.2,.8,.2,1), opacity .15s ease !important; }
+            .tx-tc-list.tc-sorting .tx-tc-card:not(.tc-lifted):hover { box-shadow: none; }
+            .tx-tc-card.tc-lifted { position: relative; z-index: 4; cursor: grabbing; transition: box-shadow .18s ease !important;
+                background: linear-gradient(270deg, rgba(var(--tc-c),0.16), rgba(255,255,255,0.05) 55%), #1a1a24 !important;
+                box-shadow: 0 20px 44px rgba(0,0,0,0.62), 0 0 0 1px rgba(167,139,250,0.6), 0 0 26px rgba(124,58,237,0.28) !important; }
+            .tx-tc-card.tc-lifted .tx-tc-head { cursor: grabbing; }
+            .tx-tc-card.tc-lifted.tc-settling { transition: transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s ease !important; }
+            .tx-tc-slot { position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none; box-sizing: border-box; border-radius: 12px;
+                border: 2px dashed rgba(167,139,250,0.65); background: rgba(124,58,237,0.09);
+                transition: top .22s cubic-bezier(.2,.8,.2,1); animation: txTcIn .15s ease; }
+            /* ==================== (v29.27.3) دفعة تحسينات تانية ==================== */
+            @keyframes txTcBar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+            @keyframes txTcPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(250,204,21,0.0); } 50% { box-shadow: 0 0 0 4px rgba(250,204,21,0.18); } }
+            /* رقم التاسك: أوضح ومتراص */
+            .tx-tc-tid { font-variant-numeric: tabular-nums; letter-spacing: .4px; color: #f8fafc; }
+            /* مستوى الصعوبة بالكلمة جنب الرقم - لونه من --tc-c بتاع الكارت */
+            .tx-tc-badge.lvl { background: rgba(var(--tc-c),0.18); color: rgb(var(--tc-c)); border: 1px solid rgba(var(--tc-c),0.45); font-weight: 800; }
+            /* الشريط بيتملّي بحركة لما الكارت يظهر (من اليمين زي اتجاه الواجهة) */
+            .tx-tc-bar > b { transform-origin: right center; animation: txTcBar .55s cubic-bezier(.2,.8,.2,1) both; }
+            /* أيقونة التحذير بتنبّض نبضة هادية بدل ما تكون ثابتة */
+            .tx-tc-badge.warn { animation: txTcPulse 2.6s ease-in-out infinite; }
+            /* فلتر المستويات: لما يتفعّل ياخد لون مستواه */
+            .tx-tc-fbtn[data-k="easy"].on { background: linear-gradient(135deg, rgba(34,197,94,0.55), rgba(34,197,94,0.28)); border-color: rgba(34,197,94,0.85); }
+            .tx-tc-fbtn[data-k="medium"].on { background: linear-gradient(135deg, rgba(234,179,8,0.55), rgba(234,179,8,0.26)); border-color: rgba(234,179,8,0.85); }
+            .tx-tc-fbtn[data-k="hard"].on { background: linear-gradient(135deg, rgba(239,68,68,0.55), rgba(239,68,68,0.26)); border-color: rgba(239,68,68,0.85); }
+            .tx-tc-fbtn[data-k="warn"].on { background: linear-gradient(135deg, rgba(250,204,21,0.45), rgba(250,204,21,0.2)); border-color: rgba(250,204,21,0.8); color: #fff; }
+            .tx-tc-fbtn { transition: background .15s ease, border-color .15s ease, color .15s ease, transform .15s ease; }
+            .tx-tc-fbtn:active { transform: scale(0.96); }
+            /* البحث: بيتوسّع لما تركّز عليه */
+            .tx-tc-search { transition: width .22s cubic-bezier(.2,.8,.2,1), border-color .15s ease, background .15s ease, box-shadow .15s ease; }
+            .tx-tc-search:focus { width: 230px; background: rgba(0,0,0,0.42); box-shadow: 0 0 0 3px rgba(167,139,250,0.18); }
+            .tx-tc-search::placeholder, .tx-tc-note::placeholder { color: #64748b; }
+            .tx-tc-note:focus { box-shadow: 0 0 0 3px rgba(167,139,250,0.16); }
+            /* الأزرار الثانوية (فحص / للآخر) هادية لحد ما تقرّب من الكارت */
+            .tx-tc-foot .tx-tc-mini:not(.primary) { opacity: 0.62; }
+            .tx-tc-card:hover .tx-tc-foot .tx-tc-mini, .tx-tc-foot .tx-tc-mini:focus-visible { opacity: 1; }
+            /* الكروت الجاهزة للتسليم أهدى بصرياً عشان الشغل المطلوب هو اللي يبان */
+            .tx-tc-card.ready { opacity: 0.8; }
+            .tx-tc-card.ready:hover { opacity: 1; }
+            /* حواف السكرول بتتلاشى بدل ما الكروت تتقطع فجأة */
+            .tx-tc-box .tx-panel-body { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 8px, #000 calc(100% - 20px), transparent 100%);
+                mask-image: linear-gradient(to bottom, transparent 0, #000 8px, #000 calc(100% - 20px), transparent 100%); }
+            /* عنوان القسم: أوضح وفيه فراغ قبله */
+            .tx-tc-sec { letter-spacing: .2px; padding-top: 2px; }
+            .tx-tc-sec .cnt { font-variant-numeric: tabular-nums; border: 1px solid rgba(255,255,255,0.08); }
+            /* ==================== (v29.27.4) دفعة تالتة ==================== */
+            @keyframes txTcCardIn { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+            @keyframes txTcShimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+            @keyframes txTcUndoIn { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+            @keyframes txTcCountdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+            @keyframes txTcNow { 0%, 100% { box-shadow: 0 0 0 0 rgba(167,139,250,0); } 50% { box-shadow: 0 0 0 4px rgba(167,139,250,0.22); } }
+            /* حركة دخول متتالية (أول فتح بس - backwards عشان ما تمسكش transform بتاع السحب بعد ما تخلص) */
+            .tx-tc-box.tc-enter .tx-tc-list > .tx-tc-card, .tx-tc-box.tc-enter .tx-tc-groups > * {
+                animation: txTcCardIn .42s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(var(--i, 0) * 55ms); }
+            /* إجمالي وقت القسم */
+            .tx-tc-sectime { margin-inline-start: 2px; padding: 0 9px; border-radius: 10px; font-size: 11px; font-weight: 700; color: #a5b4fc;
+                background: rgba(99,102,241,0.14); border: 1px solid rgba(99,102,241,0.25); font-variant-numeric: tabular-nums; }
+            /* شريط توزيع الصعوبة */
+            .tx-tc-dist { display: flex; flex: 0 0 100%; gap: 3px; height: 8px; margin: 0 0 4px; }
+            .tx-tc-dseg { border: none; padding: 0; margin: 0; min-width: 8px; height: 100%; border-radius: 4px; cursor: pointer; opacity: .85;
+                transition: opacity .15s ease, transform .15s ease, box-shadow .15s ease; }
+            .tx-tc-dseg.easy { background: #22c55e; color: #22c55e; } .tx-tc-dseg.medium { background: #eab308; color: #eab308; }
+            .tx-tc-dseg.hard { background: #ef4444; color: #ef4444; } .tx-tc-dseg.rest { background: rgba(255,255,255,0.16); cursor: default; }
+            .tx-tc-dist:hover .tx-tc-dseg:not(:hover) { opacity: .5; }
+            .tx-tc-dseg:not(.rest):hover { opacity: 1; transform: scaleY(1.6); }
+            .tx-tc-dist.has-on .tx-tc-dseg:not(.on):not(.rest) { opacity: .3; }
+            .tx-tc-dseg.on { opacity: 1; box-shadow: 0 0 10px currentColor; }
+            /* زرار فتح/قفل كل التفاصيل */
+            .tx-tc-expand { border-style: dashed; margin-inline-start: 4px; }
+            /* ↑ لفوق */
+            .tx-tc-box { position: relative; }
+            .tx-tc-top { position: absolute; left: 22px; bottom: 20px; z-index: 12; border: 1px solid rgba(167,139,250,0.55); border-radius: 999px; padding: 6px 14px;
+                background: linear-gradient(135deg, rgba(124,58,237,0.92), rgba(99,102,241,0.85)); color: #fff; font: 700 12px/1 'Cairo','Segoe UI',Tahoma,sans-serif;
+                cursor: pointer; box-shadow: 0 8px 20px rgba(0,0,0,0.5); opacity: 0; transform: translateY(10px) scale(.92); pointer-events: none;
+                transition: opacity .2s ease, transform .2s cubic-bezier(.2,.8,.2,1), filter .15s ease; }
+            .tx-tc-top.show { opacity: 1; transform: none; pointer-events: auto; }
+            .tx-tc-top:hover { filter: brightness(1.15); }
+            /* رقم التاسك قابل للنسخ + عمر الفحص */
+            .tx-tc-tid { cursor: copy; border-bottom: 1px dotted transparent; transition: color .15s ease, border-color .15s ease; }
+            .tx-tc-tid:hover { color: #c4b5fd; border-bottom-color: rgba(196,181,253,0.7); }
+            .tx-tc-metrics > .tx-tc-age { color: #94a3b8; font-size: 11.5px; }
+            .tx-tc-metrics > .tx-tc-age.old { color: #fbbf24; }
+            /* هيكل تحميل للتاسكات اللي في طابور الفحص */
+            .tx-tc-card.tc-skel { border-right-color: #a78bfa; --tc-c: 167,139,250; }
+            .tx-tc-card.tc-skel.now { animation: txTcNow 1.6s ease-in-out infinite; }
+            .tx-tc-skel-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+            .tx-tc-skel-row > i { display: block; height: 24px; border-radius: 999px; background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.05) 75%);
+                background-size: 220% 100%; animation: txTcShimmer 1.3s linear infinite; }
+            .tx-tc-skel-row > i:nth-child(1) { width: 118px; } .tx-tc-skel-row > i:nth-child(2) { width: 96px; animation-delay: .15s; } .tx-tc-skel-row > i:nth-child(3) { width: 150px; animation-delay: .3s; }
+            /* شريط تقدّم الفحص جوه الـpill */
+            #tx-tc-pill { overflow: hidden; }
+            .tx-tc-pill-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,0.1); }
+            .tx-tc-pill-bar > b { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #a78bfa, #38bdf8, #a78bfa); background-size: 200% 100%;
+                animation: txTcShimmer 1.2s linear infinite; transition: width .5s ease; }
+            /* toast التراجع */
+            .tx-tc-undo { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); z-index: 400000; direction: rtl; display: flex; align-items: center; gap: 14px;
+                padding: 10px 14px 13px; background: rgba(24,24,32,0.96); border: 1px solid rgba(167,139,250,0.4); border-radius: 14px; color: #f1f5f9;
+                font: 700 12.5px/1.4 'Cairo','Segoe UI',Tahoma,sans-serif; box-shadow: 0 14px 34px rgba(0,0,0,0.55); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+                overflow: hidden; animation: txTcUndoIn .24s cubic-bezier(.2,.8,.2,1); }
+            .tx-tc-undo.out { opacity: 0; transform: translate(-50%, 8px); transition: opacity .2s ease, transform .2s ease; }
+            .tx-tc-undo button { border: 1px solid rgba(167,139,250,0.6); background: linear-gradient(135deg, #7c3aed, #6366f1); color: #fff; border-radius: 9px; padding: 4px 12px;
+                font: inherit; font-size: 12px; cursor: pointer; transition: filter .15s ease, transform .15s ease; }
+            .tx-tc-undo button:hover { filter: brightness(1.15); transform: translateY(-1px); }
+            .tx-tc-undo > i { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, #a78bfa, #6366f1); transform-origin: right center; animation: txTcCountdown 6s linear forwards; }
+            /* ==================== (v29.28.0) علامة "إنت واقف فين" + وضع مضغوط ==================== */
+            @keyframes txTcFlash { 0%, 100% { box-shadow: 0 0 0 0 rgba(56,189,248,0); } 30% { box-shadow: 0 0 0 5px rgba(56,189,248,0.4); } }
+            .tx-tc-badge.worked { cursor: pointer; background: rgba(148,163,184,0.16); color: #94a3b8; }
+            .tx-tc-badge.worked.here { background: rgba(56,189,248,0.2); color: #7dd3fc; border: 1px solid rgba(56,189,248,0.55); }
+            .tx-tc-card.tc-here { outline: 1.5px solid rgba(56,189,248,0.5); outline-offset: -1px; }
+            .tx-tc-card.tc-worked { opacity: .88; }
+            .tx-tc-card.tc-flash { animation: txTcFlash 1.1s ease 2; }
+            .tx-tc-badge.note { display: none; }
+            .tx-tc-herebtn { border-color: rgba(56,189,248,0.5) !important; color: #7dd3fc !important; }
+            .tx-tc-box.tx-tc-compact .tx-tc-card { display: flex; align-items: center; flex-wrap: nowrap; gap: 12px; padding: 6px 12px; margin-bottom: 5px; border-radius: 10px; line-height: 1.3; }
+            .tx-tc-box.tx-tc-compact .tx-tc-list { gap: 5px; }
+            .tx-tc-box.tx-tc-compact .tx-tc-head { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; gap: 8px; font-size: 13px; margin: 0; }
+            .tx-tc-box.tx-tc-compact .tx-tc-head .tx-tc-badge.files, .tx-tc-box.tx-tc-compact .tx-tc-vline, .tx-tc-box.tx-tc-compact .tx-tc-readmore, .tx-tc-box.tx-tc-compact .tx-tc-pf,
+            .tx-tc-box.tx-tc-compact .tx-tc-more, .tx-tc-box.tx-tc-compact .tx-tc-skel-row, .tx-tc-box.tx-tc-compact .tx-tc-note,
+            .tx-tc-box.tx-tc-compact .tx-tc-foot .tx-tc-mini:not(.primary), .tx-tc-box.tx-tc-compact .tx-tc-metrics > span:nth-child(n+3) { display: none !important; }
+            .tx-tc-box.tx-tc-compact .tx-tc-badge.note { display: inline-block; }
+            .tx-tc-box.tx-tc-compact .tx-tc-metrics { flex: 0 0 auto; margin: 0; flex-wrap: nowrap; gap: 6px; }
+            .tx-tc-box.tx-tc-compact .tx-tc-metrics > span { padding: 2px 9px; white-space: nowrap; }
+            .tx-tc-box.tx-tc-compact .tx-tc-foot { flex: 0 0 auto; margin: 0; }
+            .tx-tc-box.tx-tc-compact .tx-tc-mini.primary { padding: 3px 12px; }
+            .tx-tc-box.tx-tc-compact .tx-tc-num { min-width: 22px; height: 22px; font-size: 12px; }
+            @media (prefers-reduced-motion: reduce) { .tx-tc-more, .tx-tc-anim, .tx-tc-slot, .tx-tc-bar > b, .tx-tc-badge.warn, .tx-tc-box.tc-enter .tx-tc-list > .tx-tc-card, .tx-tc-box.tc-enter .tx-tc-groups > *, .tx-tc-skel-row > i, .tx-tc-pill-bar > b, .tx-tc-card.tc-skel.now, .tx-tc-undo { animation: none; } .tx-tc-mini, .tx-tc-list .tx-tc-card { transition: none; } }
         `;
         document.head.appendChild(style);
     }
@@ -15328,6 +15511,11 @@
             document.body.appendChild(pill);
         }
         const n = Math.min(st.queue.length, st.doneIds.length + (st.phase === 'opening' ? 1 : 0));
+        { // (v29.27.4) شريط تقدّم بيلمع جوه الـpill عشان تحس إن الفحص شغال
+            let pb = pill.querySelector('.tx-tc-pill-bar b');
+            if (!pb) { const bi = document.createElement('i'); bi.className = 'tx-tc-pill-bar'; pb = document.createElement('b'); bi.appendChild(pb); pill.appendChild(bi); }
+            pb.style.width = Math.max(6, st.queue.length ? Math.round(st.doneIds.length / st.queue.length * 100) : 0) + '%';
+        }
         let extra = '';
         if (st.phase === 'opening' && isOnTargetSite()) {
             const ld = tcLoaderInfo();
@@ -15400,8 +15588,8 @@
         return 'https://www.youtube.com/watch?v=' + videoId + '&t=' + Math.max(0, Math.floor(startSec || 0)) + 's';
     }
     function tcOpenLink(url) { try { window.open(url, '_blank', 'noopener'); } catch (e) { /* تجاهل */ } }
-    function tcCopyText(text) {
-        const done = () => showToast('اتنسخ اللينك 📋', false, 1500);
+    function tcCopyText(text, msg) {
+        const done = () => showToast(msg || 'اتنسخ اللينك 📋', false, 1500);
         try {
             if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, () => tcCopyFallback(text, done)); return; }
         } catch (e) { /* تجاهل */ }
@@ -15464,6 +15652,130 @@
         });
         return items;
     }
+    // ==================== (v29.27.2) سحب الكروت: pointer events + FLIP-زي ====================
+    // الكارت المسحوب بيمشي مع الماوس (مرفوع بظل وتكبير بسيط)، الكروت التانية بتزحلق مكانها بحركة ناعمة، ومربع منقّط بيبيّن هتنزل فين.
+    // سكرول أوتوماتيك بـ requestAnimationFrame (سرعته على قد قربك من الحافة، وشغال حتى لو الماوس واقف). Esc بيلغي. بدون position:fixed
+    // (الشاشة فيها backdrop-filter بيبوّظ fixed) - كله بـ transform جوه القايمة.
+    function tcDragStart(card, ev, ctx) {
+        const box = card.parentElement, body = ctx && ctx.body;
+        if (!box || !body) return;
+        if (ev.pointerType === 'mouse') ev.preventDefault(); // من غير تحديد نص أثناء السحب
+        const startY = ev.clientY, startX = ev.clientX;
+        let lastY = startY, started = false, ended = false, raf = 0, curT = -1;
+        let items = [], i0 = -1, tops = [], hs = [], gap = 10, Hd = 0, startScroll = 0, slot = null, prevCursor = '';
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+        const finalDy = (t) => {
+            let d = 0;
+            if (t > i0) { for (let k = i0 + 1; k <= t; k++) d += hs[k] + gap; }
+            else if (t < i0) { for (let k = t; k < i0; k++) d -= hs[k] + gap; }
+            return d;
+        };
+        const setNumbers = (t) => {
+            if (!box._txNumbered) return;
+            const order = items.filter(c => c !== card); order.splice(t, 0, card);
+            order.forEach((c, idx) => { const n = c.querySelector('.tx-tc-num'); if (n) n.textContent = idx + 1; });
+        };
+        const begin = () => {
+            items = Array.from(box.children).filter(c => c.classList && c.classList.contains('tx-tc-card'));
+            i0 = items.indexOf(card);
+            if (i0 < 0 || items.length < 2) { cleanup(); return false; }
+            tops = items.map(c => c.offsetTop); hs = items.map(c => c.offsetHeight);
+            gap = parseFloat(getComputedStyle(box).rowGap) || 10;
+            Hd = hs[i0]; startScroll = body.scrollTop; curT = i0;
+            box.classList.add('tc-sorting'); card.classList.add('tc-lifted');
+            slot = document.createElement('div'); slot.className = 'tx-tc-slot';
+            slot.style.top = tops[i0] + 'px'; slot.style.height = Hd + 'px';
+            box.appendChild(slot); // آخر ابن (مش بيبوّظ ترقيم الكروت) وهو absolute فمش داخل في gap
+            prevCursor = document.body.style.cursor; document.body.style.cursor = 'grabbing';
+            started = true; raf = requestAnimationFrame(loop);
+            return true;
+        };
+        const update = () => {
+            if (!started || ended) return;
+            const n = items.length;
+            const lo = tops[0] - tops[i0] - 14, hi = tops[n - 1] + hs[n - 1] - Hd - tops[i0] + 14;
+            const dy = clamp((lastY - startY) + (body.scrollTop - startScroll), lo, hi);
+            card.style.transform = 'translateY(' + dy + 'px) scale(1.015)';
+            const center = tops[i0] + dy + Hd / 2;
+            let t = 0;
+            for (let k = 0; k < n; k++) { if (k !== i0 && tops[k] + hs[k] / 2 < center) t++; }
+            items.forEach((c, k) => {
+                if (k === i0) return;
+                let sh = 0;
+                if (t > i0 && k > i0 && k <= t) sh = -(Hd + gap);
+                else if (t < i0 && k >= t && k < i0) sh = (Hd + gap);
+                c.style.transform = 'translateY(' + sh + 'px)';
+            });
+            if (t !== curT) { curT = t; slot.style.top = (tops[i0] + finalDy(t)) + 'px'; setNumbers(t); }
+        };
+        const loop = () => {
+            if (!started || ended) return;
+            const bb = body.getBoundingClientRect(), fb = body.querySelector('.tx-tc-filter');
+            const topEdge = Math.max(bb.top, fb ? fb.getBoundingClientRect().bottom : bb.top), zone = 90;
+            let v = 0;
+            if (lastY < topEdge + zone) v = -Math.min(1.7, (topEdge + zone - lastY) / zone) * 20;
+            else if (lastY > bb.bottom - zone) v = Math.min(1.7, (lastY - (bb.bottom - zone)) / zone) * 20;
+            if (v) {
+                if (Math.abs(v) < 1) v = v < 0 ? -1 : 1;
+                const before = body.scrollTop; body.scrollTop = before + v;
+                if (body.scrollTop !== before) update();
+            }
+            raf = requestAnimationFrame(loop);
+        };
+        const onMove = (e) => {
+            if (e.pointerId !== ev.pointerId) return;
+            lastY = e.clientY;
+            if (!started) { if (Math.hypot(e.clientX - startX, e.clientY - startY) < 5) return; if (!begin()) return; }
+            update();
+        };
+        const onUp = (e) => { if (e.pointerId === ev.pointerId) finish(e.type !== 'pointercancel'); };
+        const onKey = (e) => { if (e.key === 'Escape' && started) { e.stopPropagation(); e.preventDefault(); finish(false); } };
+        function cleanup() {
+            document.removeEventListener('pointermove', onMove, true);
+            document.removeEventListener('pointerup', onUp, true);
+            document.removeEventListener('pointercancel', onUp, true);
+            document.removeEventListener('keydown', onKey, true);
+        }
+        function finish(commit) {
+            if (ended) return;
+            ended = true; cancelAnimationFrame(raf); cleanup();
+            if (!started) return;
+            document.body.style.cursor = prevCursor;
+            const t = commit ? curT : i0;
+            card.classList.add('tc-settling');
+            card.style.transform = 'translateY(' + finalDy(t) + 'px) scale(1)';
+            items.forEach((c, k) => {
+                if (k === i0) return;
+                let sh = 0;
+                if (t > i0 && k > i0 && k <= t) sh = -(Hd + gap);
+                else if (t < i0 && k >= t && k < i0) sh = (Hd + gap);
+                c.style.transform = 'translateY(' + sh + 'px)';
+            });
+            if (slot) slot.style.top = (tops[i0] + finalDy(t)) + 'px';
+            let done = false;
+            const commitDom = () => {
+                if (done) return; done = true;
+                card.removeEventListener('transitionend', onEnd);
+                if (slot) slot.remove();
+                items.forEach(c => { c.style.transition = 'none'; c.style.transform = ''; });
+                card.classList.remove('tc-lifted', 'tc-settling');
+                if (t !== i0) { const others = items.filter(c => c !== card); box.insertBefore(card, others[t] || null); }
+                void box.offsetHeight; // reflow قبل ما نرجّع الـtransition
+                items.forEach(c => { c.style.transition = ''; });
+                box.classList.remove('tc-sorting');
+                if (box._txRenumber) box._txRenumber();
+                if (t !== i0 && ctx.onCommit) ctx.onCommit();
+            };
+            const onEnd = (e) => { if (e.target === card && e.propertyName === 'transform') commitDom(); };
+            card.addEventListener('transitionend', onEnd);
+            setTimeout(commitDom, 320); // احتياطي لو transitionend ما اتطلقش
+        }
+        document.addEventListener('pointermove', onMove, true);
+        document.addEventListener('pointerup', onUp, true);
+        document.addEventListener('pointercancel', onUp, true);
+        document.addEventListener('keydown', onKey, true);
+    }
+
     // سطر الفيديو جوه الكارت: لكل ملف الدقيقة من/إلى + زرار يفتح يوتيوب على الوقت ده + نسخ اللينك.
     // (v29.18.1) لو اسم ملف ما اتقراش بيتعرض بسببه بدل ما يختفي السطر (عشان نعرف المشكلة فين).
     function tcBuildVideoLine(r, inGroup) {
@@ -15504,6 +15816,150 @@
     let tcLastCards = [];
     // (v29.19.0) حالة فلتر مركز التاسكات (بتفضل بين إعادة الرسم - وبتتصفّر لما تفتح المركز من جديد)
     let tcFilterState = { level: 'all', q: '' };
+    // ==================== (v29.27.4) helpers: فتح جديد / إجمالي وقت / عمر الفحص / toast تراجع ====================
+    let tcFreshOpen = false; // الحركة المتتالية بتشتغل أول ما تفتح المركز بس (مش في إعادة الرسم)
+    let tcUndoToastEl = null, tcUndoTimer = 0;
+    function tcFmtTotal(sec) {
+        sec = Math.max(0, Math.round(sec || 0));
+        const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60;
+        return h ? (h + ':' + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0')) : (m + ':' + String(x).padStart(2, '0'));
+    }
+    function tcAgoText(ms) {
+        const m = Math.floor(Math.max(0, ms) / 60000);
+        if (m < 1) return 'من أقل من دقيقة';
+        if (m < 60) return 'من ' + m + ' د';
+        const h = Math.floor(m / 60);
+        if (h < 24) return 'من ' + h + ' س' + (m % 60 ? ' و' + (m % 60) + ' د' : '');
+        return 'من ' + Math.floor(h / 24) + ' يوم';
+    }
+    // ==================== (v29.28.0) وضع مضغوط + علامة "اتشغلت عليه / إنت واقف فين" ====================
+    const TC_COMPACT_KEY = 'tx_taskcompact_v1';
+    const TC_WORKED_KEY = 'tx_taskworked_v1'; // { last: {id, at}, ids: { id: at } }
+    const TC_WORKED_TTL = 3 * 24 * 3600 * 1000;
+    function tcReadWorked() {
+        const w = tcRead(TC_WORKED_KEY, null);
+        return (w && typeof w === 'object') ? { last: w.last || null, ids: w.ids || {} } : { last: null, ids: {} };
+    }
+    function tcMarkWorked(id) {
+        id = String(id || ''); if (!id) return;
+        const w = tcReadWorked(), now = Date.now();
+        w.ids[id] = now; w.last = { id, at: now };
+        Object.keys(w.ids).forEach(k => { if (now - w.ids[k] > TC_WORKED_TTL) delete w.ids[k]; });
+        tcWrite(TC_WORKED_KEY, w);
+    }
+    function tcClearWorked(id) {
+        const w = tcReadWorked(); id = String(id);
+        delete w.ids[id]; if (w.last && String(w.last.id) === id) w.last = null;
+        tcWrite(TC_WORKED_KEY, w);
+    }
+    // بيتنادى كل 800ms من tcTick: لو إنت في صفحة تاسك (مش أثناء الفحص) ورقم التاسك ثابت لتيكين ورا بعض = اتشغلت عليه
+    let tcTrackId = null, tcTrackCount = 0, tcTrackDone = null;
+    function tcTrackWorked() {
+        try {
+            if (tcScanActive()) { tcTrackId = null; return; }
+            const id = getTaskTimerTaskId();
+            if (!id) { tcTrackId = null; return; }
+            if (id !== tcTrackId) { tcTrackId = id; tcTrackCount = 1; return; }
+            if (++tcTrackCount >= 2 && tcTrackDone !== id) { tcTrackDone = id; tcMarkWorked(id); }
+        } catch (e) { /* تجاهل */ }
+    }
+    // ==================== (v29.29.0) المركز يفضل مفتوح + كل تاسك في تاب جديد ====================
+    const TC_NEWTAB_KEY = 'tx_newtab_v1';
+    const TC_OPENDIAG_KEY = 'tx_open_diag';
+    function tcNewTabOn() { const v = tcRead(TC_NEWTAB_KEY, null); return !(v && v.on === false); } // افتراضياً شغّال
+    // لما Continue/Annotate بتفتح التاسك في نافذة "بالاسم" (window.open(url, 'name')) كل تاسك جديد بيحل محل القديم.
+    // هنا بنحوّل أي اسم نافذة ثابت لـ _blank وإحنا في صفحة My Task، فكل تاسك بيتفتح في تاب لوحده.
+    (function tcInstallNewTabFix() {
+        try {
+            const origOpen = window.open;
+            const onListPage = () => { try { return !isOnTargetSite() && /Completion status/i.test((document.body && document.body.textContent) || ''); } catch (e) { return false; } };
+            window.open = function (url, name, feat) {
+                try {
+                    if (onListPage()) {
+                        const diag = tcRead(TC_OPENDIAG_KEY, []) || [];
+                        diag.push({ at: new Date().toISOString(), name: name == null ? null : String(name), url: String(url || '').slice(0, 90) });
+                        tcWrite(TC_OPENDIAG_KEY, diag.slice(-6));
+                        if (tcNewTabOn() && name && !/^_(blank|self|top|parent)$/i.test(String(name))) name = '_blank';
+                    }
+                } catch (e) { /* تجاهل */ }
+                return origOpen.call(this, url, name, feat);
+            };
+            const retarget = (ev) => {
+                try {
+                    if (!tcNewTabOn() || !onListPage()) return;
+                    const a = ev.target && ev.target.closest && ev.target.closest('a[target], form[target]');
+                    if (!a) return;
+                    const t = a.getAttribute('target');
+                    if (t && !/^_(blank|self|top|parent)$/i.test(t)) a.setAttribute('target', '_blank');
+                } catch (e) { /* تجاهل */ }
+            };
+            document.addEventListener('click', retarget, true);
+            document.addEventListener('submit', retarget, true);
+        } catch (e) { /* تجاهل */ }
+    })();
+    // إعادة رسم المركز (لو مفتوح) بعد الرجوع للتاب أو بعد تغيّر علامة "اتفتح" من تاب تاني - بنفس مكان السكرول
+    let tcRefreshT = 0, tcSilentRender = false, tcPanelSigVal = '';
+    function tcPanelSig(cards) { // بصمة بسيطة للبيانات اللي بتتعرض - لو ما اتغيّرتش مفيش داعي نعيد الرسم
+        try {
+            const res = tcRead(TC_RESULTS_KEY, {}) || {};
+            return JSON.stringify([
+                (cards || []).map(c => [c.id, c.done, c.total, c.toBeSubmitted]),
+                tcRead(TC_WORKED_KEY, null), tcRead(TC_NOTES_KEY, {}), tcRead(TC_ORDER_KEY, null),
+                Object.keys(res).map(k => k + ':' + (res[k] && res[k].scannedAt) + ':' + !!(res[k] && res[k].error)),
+                !!tcScanActive()
+            ]);
+        } catch (e) { return String(Math.random()); }
+    }
+    function tcRefreshPanel(now) {
+        clearTimeout(tcRefreshT);
+        tcRefreshT = setTimeout(() => {
+            try {
+                if (!document.querySelector('.tx-tc-overlay') || tcCollecting) return;
+                if (document.querySelector('.tx-tc-card.tc-lifted')) return; // سحب شغّال
+                const ae = document.activeElement;
+                if (ae && ae.classList && (ae.classList.contains('tx-tc-note') || ae.classList.contains('tx-tc-search'))) return; // بيكتب
+                const body = document.querySelector('.tx-tc-overlay .tx-panel-body');
+                const top = body ? body.scrollTop : 0;
+                let cs = null;
+                if (tcPager().pages <= 1) { const fresh = tcParseCards(); if (fresh.length) cs = fresh; }
+                if (!now && tcPanelSig(cs || tcLastCards) === tcPanelSigVal) return; // مفيش تغيير = مفيش إعادة رسم (بيمنع الوميض)
+                tcSilentRender = true;
+                tcShowPanel(cs || tcLastCards);
+                const nb = document.querySelector('.tx-tc-overlay .tx-panel-body');
+                if (nb) nb.scrollTop = top;
+            } catch (e) { /* تجاهل */ }
+        }, now ? 0 : 180);
+    }
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') tcRefreshPanel(); });
+    window.addEventListener('focus', () => tcRefreshPanel());
+    window.addEventListener('storage', (e) => { if (e.key === TC_WORKED_KEY || e.key === TC_RESULTS_KEY || e.key === TC_NOTES_KEY) tcRefreshPanel(); });
+    function tcAgoShort(ms) { // (v29.27.5) صيغة مختصرة للشارة: <1د / 25د / 1س 22د / 2ي
+        const m = Math.floor(Math.max(0, ms) / 60000);
+        if (m < 1) return '<1د';
+        if (m < 60) return m + 'د';
+        const h = Math.floor(m / 60);
+        if (h < 24) return h + 'س' + (m % 60 ? ' ' + (m % 60) + 'د' : '');
+        return Math.floor(h / 24) + 'ي';
+    }
+    function tcUndoOrder(prev) {
+        tcWrite(TC_ORDER_KEY, Array.isArray(prev) ? prev : []);
+        if (document.querySelector('.tx-tc-overlay')) tcShowPanel(tcLastCards); // لو المركز مقفول مش بنفتحه
+    }
+    function tcUndoToast(text, onUndo) {
+        ensureTaskCenterStyles();
+        if (tcUndoToastEl) { try { tcUndoToastEl.remove(); } catch (e) { /* تجاهل */ } clearTimeout(tcUndoTimer); }
+        const el = document.createElement('div');
+        el.className = 'tx-tc-undo';
+        const msg = document.createElement('span'); msg.textContent = text;
+        const btn = document.createElement('button'); btn.textContent = '↩ تراجع';
+        const bar = document.createElement('i');
+        const close = () => { if (tcUndoToastEl === el) tcUndoToastEl = null; clearTimeout(tcUndoTimer); el.classList.add('out'); setTimeout(() => el.remove(), 230); };
+        btn.onclick = () => { close(); try { onUndo(); } catch (e) { /* تجاهل */ } };
+        el.appendChild(msg); el.appendChild(btn); el.appendChild(bar);
+        document.body.appendChild(el);
+        tcUndoToastEl = el;
+        tcUndoTimer = setTimeout(close, 6000);
+    }
     const TC_COLLAPSE_KEY = 'tx_taskcollapse_v1'; // (v29.20.0) حالة فتح/قفل الأقسام (محفوظة)
     // (v29.21.0) قياس الكلام الإنجليزي: نسبة الكلمات الإنجليزي من كل كلمات الكلام. للتعديل: غيّر الأرقام دي بس.
     const TC_EN_MED = 0.07;        // من 7% = إنجليزي متوسط
@@ -15539,6 +15995,7 @@
         if (!cardsIn) {
             // (v29.17.0) أول ما تفتح المركز بيقرا كل الصفحات (لو أكتر من صفحة)، وبعدين يرسم
             if (tcCollecting) return;
+            tcFreshOpen = true; // (v29.27.4)
             tcFilterState = { level: 'all', q: '' }; // (v29.19.0) فتح جديد = من غير فلتر
             if (tcPager().pages > 1) showToast('بقرا كل صفحات My Task...', false, 2500);
             tcCollectAllCards().then(cs => tcShowPanel(cs)).catch(() => tcShowPanel(tcParseCards()));
@@ -15574,6 +16031,10 @@
         const reviewRows = workRows.filter(r => r.r && !r.r.error);
         const unscannedRows = workRows.filter(r => !(r.r && !r.r.error));
         const collapsedState = tcRead(TC_COLLAPSE_KEY, {}) || {};
+        // (v29.27.4) فحص شغال دلوقتي؟ التاسكات اللي لسه في الطابور بتتعرض كهيكل تحميل
+        const scanSt = tcScanActive() ? tcReadScan() : null;
+        const scanQueue = scanSt ? new Set((scanSt.queue || []).map(String)) : null;
+        const scanDone = scanSt ? new Set((scanSt.doneIds || []).map(String)) : null;
         const saveOrder = (ids) => {
             const old = (tcRead(TC_ORDER_KEY, []) || []).map(String).filter(id => !ids.includes(id));
             tcWrite(TC_ORDER_KEY, ids.concat(old).slice(0, 500));
@@ -15581,9 +16042,17 @@
 
         const overlay = document.createElement('div');
         overlay.className = 'tx-panel-overlay tx-tc-overlay';
+        const silent = tcSilentRender; tcSilentRender = false; // (v29.29.1) إعادة رسم هادية من غير حركة ظهور
+        if (silent) overlay.style.animation = 'none';
         overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) overlay.remove(); });
         const box = document.createElement('div');
         box.className = 'tx-panel-box tx-tc-box';
+        if (silent) box.style.animation = 'none';
+        const freshOpen = tcFreshOpen; tcFreshOpen = false; // (v29.27.4)
+        const compact = (tcRead(TC_COMPACT_KEY, { on: false }) || {}).on === true; // (v29.28.0)
+        if (compact) box.classList.add('tx-tc-compact');
+        const worked = tcReadWorked(); // (v29.28.0)
+        const lastId = worked.last ? String(worked.last.id) : '';
 
         const header = document.createElement('div');
         header.className = 'tx-panel-header';
@@ -15616,7 +16085,10 @@
         };
         addMenuItem('🔄 إعادة فحص الكل', 'يفحص كل التاسكات من الأول (أبطأ من فحص الجديد)', () => tcStartScan('all'));
         addMenuItem(grouped ? '🎬 تجميع بالفيديو ✓' : '🎬 تجميع بالفيديو', 'يجمّع التاسكات اللي من نفس الفيديو ويرتّبها بترتيب الفيديو', () => { tcWrite(TC_GROUP_KEY, { on: !grouped }); tcShowPanel(tcLastCards); });
-        addMenuItem('↺ ترتيب بالصعوبة', 'يلغي ترتيبك ويرجّع الترتيب من الأسهل للأصعب', () => { tcWrite(TC_ORDER_KEY, []); tcShowPanel(tcLastCards); });
+        addMenuItem(compact ? '📏 وضع مضغوط ✓' : '📏 وضع مضغوط', 'كل تاسك في سطر واحد (رقم، مستوى، مدة، سيجمنت، فتح) - تشوف تاسكات أكتر في الشاشة', () => { tcWrite(TC_COMPACT_KEY, { on: !compact }); tcShowPanel(tcLastCards); });
+        const ntOn = tcNewTabOn();
+        addMenuItem(ntOn ? '🪟 كل تاسك في تاب جديد ✓' : '🪟 كل تاسك في تاب جديد', 'لما تفتح تاسك تاني بيتفتح في تاب لوحده بدل ما يحل محل التاب الأولى', () => { tcWrite(TC_NEWTAB_KEY, { on: !ntOn }); tcShowPanel(tcLastCards); });
+        addMenuItem('↺ ترتيب بالصعوبة', 'يلغي ترتيبك ويرجّع الترتيب من الأسهل للأصعب', () => { const prev = tcRead(TC_ORDER_KEY, null); tcWrite(TC_ORDER_KEY, []); tcShowPanel(tcLastCards); tcUndoToast('اترجع الترتيب بالصعوبة', () => tcUndoOrder(prev)); });
         moreWrap.appendChild(moreBtn);
         moreWrap.appendChild(menu);
         actions.appendChild(moreWrap);
@@ -15642,6 +16114,8 @@
         // ---- (v29.19.0) شريط فلتر وبحث: الكل / سهل / متوسط / صعب / فيه تحذير + بحث برقم التاسك ----
         const rowById = new Map(rows.map(r => [String(r.id), r]));
         const fbtns = {};
+        const distSeg = {}; // (v29.27.4) شريط توزيع الصعوبة
+        const distBar = document.createElement('div'); distBar.className = 'tx-tc-dist';
         const fcounts = {
             all: rows.length, easy: counts.easy, medium: counts.medium, hard: counts.hard,
             warn: rows.filter(r => tcHasWarning(r.r)).length
@@ -15668,6 +16142,8 @@
             const active = tcFilterState.level !== 'all' || !!normQ(tcFilterState.q);
             body.classList.toggle('tx-tc-filtering', active);
             Object.keys(fbtns).forEach(k => fbtns[k].classList.toggle('on', tcFilterState.level === k));
+            Object.keys(distSeg).forEach(k => distSeg[k].classList.toggle('on', tcFilterState.level === k));
+            distBar.classList.toggle('has-on', ['easy', 'medium', 'hard'].indexOf(tcFilterState.level) >= 0);
             let shown = 0;
             body.querySelectorAll('.tx-tc-card').forEach(c => {
                 const m = matchRow(rowById.get(c.dataset.id));
@@ -15688,15 +16164,28 @@
                 list.style.display = hideList ? 'none' : '';
                 const cnt = sec.querySelector('.cnt');
                 if (cnt) cnt.textContent = active ? (vis + '/' + all.length) : all.length;
+                const stm = sec.querySelector('.tx-tc-sectime');
+                if (stm) { let tt = 0; all.forEach(c => { if (c.style.display !== 'none') tt += parseFloat(c.dataset.sec) || 0; }); stm.textContent = '🎧 ' + tcFmtTotal(tt); }
             });
             fcount.style.display = active ? '' : 'none';
             fcount.textContent = 'عرض ' + shown + ' من ' + rows.length + ' تاسك';
             noMatch.style.display = (active && shown === 0) ? 'block' : 'none';
         };
         if (rows.length > 0) {
+            [['easy', counts.easy, 'سهل'], ['medium', counts.medium, 'متوسط'], ['hard', counts.hard, 'صعب']].forEach(([k, n, lb]) => {
+                if (!n) return;
+                const sg = document.createElement('button');
+                sg.className = 'tx-tc-dseg ' + k; sg.style.flexGrow = n;
+                sg.title = lb + ': ' + n + ' (' + Math.round(n / rows.length * 100) + '%) — دوس للفلترة';
+                sg.onclick = () => { tcFilterState.level = (tcFilterState.level === k ? 'all' : k); applyFilter(); };
+                distSeg[k] = sg; distBar.appendChild(sg);
+            });
+            const restN = rows.length - counts.easy - counts.medium - counts.hard;
+            if (restN > 0 && distBar.children.length) { const g = document.createElement('span'); g.className = 'tx-tc-dseg rest'; g.style.flexGrow = restN; g.title = 'لسه ما اتفحصش / فشل الفحص: ' + restN; distBar.appendChild(g); }
+            if (distBar.children.length) fbar.appendChild(distBar);
             ['all', 'easy', 'medium', 'hard', 'warn'].forEach(k => {
                 const b = document.createElement('button');
-                b.className = 'tx-tc-fbtn';
+                b.className = 'tx-tc-fbtn'; b.dataset.k = k;
                 b.textContent = fLabels[k] + ' ' + fcounts[k];
                 b.onclick = () => { tcFilterState.level = k; applyFilter(); };
                 fbtns[k] = b;
@@ -15718,6 +16207,23 @@
                 gc.textContent = groupChipText;
                 fbar.appendChild(gc);
             }
+            const expBtn = document.createElement('button'); // (v29.27.4) فتح / قفل كل التفاصيل
+            expBtn.className = 'tx-tc-fbtn tx-tc-expand';
+            expBtn.textContent = '📖 كل التفاصيل';
+            expBtn.title = 'فتح / قفل التفاصيل في كل الكروت الظاهرة';
+            expBtn.onclick = () => {
+                const cs = Array.from(body.querySelectorAll('.tx-tc-card')).filter(c => c.style.display !== 'none' && c.querySelector('.tx-tc-more'));
+                if (!cs.length) return;
+                const openAll = cs.some(c => c.querySelector('.tx-tc-more').style.display === 'none');
+                cs.forEach(c => {
+                    const mo = c.querySelector('.tx-tc-more'), tg = c.querySelector('.tx-tc-readmore');
+                    mo.style.display = openAll ? '' : 'none';
+                    if (tg) tg.textContent = openAll ? 'إخفاء ▴' : 'تفاصيل ▾';
+                    if (openAll) tcOpenCards.add(c.dataset.id); else tcOpenCards.delete(c.dataset.id);
+                });
+                expBtn.textContent = openAll ? '📕 قفل التفاصيل' : '📖 كل التفاصيل';
+            };
+            fbar.appendChild(expBtn);
             fbar.appendChild(search);
             fbar.appendChild(fcount);
             body.appendChild(fbar);
@@ -15735,19 +16241,35 @@
             opts = opts || {};
             const card = document.createElement('div');
             card.dataset.id = row.id;
+            card.dataset.sec = (row.r && !row.r.error && row.r.audioSec > 0) ? row.r.audioSec : 0; // (v29.27.4) لإجمالي وقت القسم
             const r = row.r;
             const ok = !!(r && !r.error);
-            card.className = 'tx-tc-card ' + (row.toBeSubmitted ? 'ready' : (ok ? r.level : ''));
+            const pendingScan = !!(scanQueue && scanQueue.has(String(row.id)) && !scanDone.has(String(row.id))); // (v29.27.4)
+            const scanningNow = pendingScan && String(scanSt.current) === String(row.id);
+            card.className = 'tx-tc-card ' + (row.toBeSubmitted ? 'ready' : (ok ? r.level : '')) + (pendingScan ? ' tc-skel' + (scanningNow ? ' now' : '') : '');
             const head = document.createElement('div');
             head.className = 'tx-tc-head';
             const dot = row.toBeSubmitted ? '📤' : (ok ? TC_LEVELS[r.level].dot : '⚪');
-            const grip = document.createElement('span'); grip.className = 'tx-tc-grip'; grip.textContent = '⋮⋮'; grip.title = 'اسحب لتغيير الترتيب';
+            const grip = document.createElement('span'); grip.className = 'tx-tc-grip'; grip.textContent = '⋮⋮'; grip.title = 'اسحب لتغيير الترتيب • دبل كليك = ابعته لأول القايمة';
+            grip.addEventListener('dblclick', (e) => { // (v29.27.4)
+                e.stopPropagation();
+                if (opts.noDrag || row.toBeSubmitted || body.classList.contains('tx-tc-filtering')) return;
+                const prev = tcRead(TC_ORDER_KEY, null);
+                const ids = [String(row.id)].concat(workRows.map(x => String(x.id)).filter(id => id !== String(row.id)));
+                saveOrder(ids.concat(readyRows.map(x => String(x.id))));
+                tcShowPanel(tcLastCards);
+                tcUndoToast('اتنقل تاسك ' + row.id + ' لأول القايمة', () => tcUndoOrder(prev));
+            });
             const num = document.createElement('span'); num.className = 'tx-tc-num' + (row.toBeSubmitted ? ' done' : ''); num.textContent = row.toBeSubmitted ? '✓' : '·';
             head.appendChild(grip); head.appendChild(num);
-            head.appendChild(document.createTextNode(dot + ' تاسك ' + row.id));
+            head.appendChild(document.createTextNode((row.toBeSubmitted || !ok ? dot + ' ' : '') + 'تاسك '));
+            { const tid = document.createElement('span'); tid.className = 'tx-tc-tid'; tid.textContent = row.id; tid.title = 'دوس عشان تنسخ رقم التاسك';
+              tid.onclick = (e) => { e.stopPropagation(); tcCopyText(String(row.id), 'اتنسخ رقم التاسك ' + row.id + ' 📋'); }; head.appendChild(tid); } // (v29.27.3) الرقم لوحده عشان يتنسّق // (v29.27.1) النقطة اتشالت من الكروت المفحوصة: لون الصعوبة بقى على الحافة + حلقة الرقم + تدرج الكارت
             const addBadge = (t, cls) => { const s = document.createElement('span'); s.className = 'tx-tc-badge' + (cls ? ' ' + cls : ''); s.textContent = t; head.appendChild(s); };
-            if (row.total !== null) addBadge('ملفات ' + row.done + '/' + row.total);
-            if (row.toBeSubmitted) addBadge('جاهز للتسليم', 'ok');
+            if (ok && !row.toBeSubmitted && !pendingScan && TC_LEVELS[r.level]) addBadge(TC_LEVELS[r.level].label, 'lvl'); // (v29.27.3) مستوى الصعوبة بالكلمة (اللون وحده مش كفاية)
+            if (row.total !== null) addBadge('ملفات ' + row.done + '/' + row.total, 'files');
+            if (pendingScan) addBadge(scanningNow ? '⏳ بيتفحص دلوقتي...' : '⏳ في الانتظار...', 'ok');
+            else if (row.toBeSubmitted) addBadge('جاهز للتسليم', 'ok');
             else if (!r) { if (!row.done) addBadge('Annotate', 'new'); else addBadge('لسه ما اتفحصش'); }
             else if (r.error) addBadge('فشل: ' + r.error, 'err');
             else if (r.partial) addBadge('جزئي ' + r.filesAnalyzed + '/' + r.filesTotal + ' ملف', 'warn');
@@ -15766,16 +16288,48 @@
                 w.title = warnLines.join('\n');
                 head.appendChild(w);
             }
+            { // (v29.28.0) علامة "اتشغلت عليه" + "إنت واقف هنا"
+                const wAt = worked.ids[String(row.id)];
+                if (wAt) {
+                    const isLast = String(row.id) === lastId;
+                    card.classList.add(isLast ? 'tc-here' : 'tc-worked');
+                    const wb = document.createElement('span');
+                    wb.className = 'tx-tc-badge worked' + (isLast ? ' here' : '');
+                    wb.textContent = isLast ? '📍 إنت واقف هنا' : '● اتفتح';
+                    wb.title = (isLast ? 'آخر تاسك فتحته' : 'اتفتح قبل كده') + ' ' + tcAgoText(Date.now() - wAt) + ' - دوس لمسح العلامة';
+                    wb.onclick = (e) => { e.stopPropagation(); tcClearWorked(row.id); tcShowPanel(tcLastCards); };
+                    head.appendChild(wb);
+                }
+                if (row.note) { const nb = document.createElement('span'); nb.className = 'tx-tc-badge note'; nb.textContent = '📝'; nb.title = row.note; head.appendChild(nb); }
+            }
             card.appendChild(head);
+            if (pendingScan) { const sk = document.createElement('div'); sk.className = 'tx-tc-skel-row'; sk.innerHTML = '<i></i><i></i><i></i>'; card.appendChild(sk); } // (v29.27.4) هيكل تحميل
 
-            if (ok) {
+            if (ok && !pendingScan) {
                 const m = document.createElement('div');
                 m.className = 'tx-tc-metrics';
                 [
                     '🎧 مدة الصوت ' + (r.audioSec > 0 ? tcFmtClock(r.audioSec) : '—'),
                     '🧩 ' + r.segs + ' سيجمنت',
                     '📊 درجة الصعوبة ' + r.score.toFixed(2)
-                ].forEach(t => { const s = document.createElement('span'); s.textContent = t; m.appendChild(s); });
+                ].forEach((t, k) => {
+                    const s = document.createElement('span'); s.textContent = t;
+                    if (k === 2) { // (v29.27.1) شريط صغير جنب درجة الصعوبة
+                        const bar = document.createElement('i'); bar.className = 'tx-tc-bar';
+                        const fill = document.createElement('b'); fill.style.width = Math.max(4, Math.min(100, Math.round(r.score * 100))) + '%';
+                        bar.appendChild(fill); s.appendChild(bar);
+                    }
+                    m.appendChild(s);
+                });
+                if (r.scannedAt) { // (v29.27.4) عمر الفحص (أكتر من ساعة = بنبّه إنه ممكن يكون قديم)
+                    const ageMs = Date.now() - r.scannedAt, old = ageMs > 3600000;
+                    const ag = document.createElement('span');
+                    ag.className = 'tx-tc-age' + (old ? ' old' : '');
+                    ag.textContent = '🕒 ' + tcAgoShort(ageMs);
+                    ag.title = 'اتفحص ' + tcAgoText(ageMs) + (old ? ' - ممكن تعيد الفحص' : '');
+                    try { ag.title += ' (' + new Date(r.scannedAt).toLocaleString('ar-EG') + ')'; } catch (e) { /* تجاهل */ }
+                    m.appendChild(ag);
+                }
                 if (enI && enI.level !== 'low') { // (v29.21.0) الإنجليزي بيظهر فوق بس لو متوسط/كتير
                     const es = document.createElement('span');
                     es.textContent = '🔤 إنجليزي ' + (enI.level === 'high' ? 'كتير' : 'متوسط') + ' (' + enI.pct + '%)';
@@ -15784,10 +16338,11 @@
                     m.appendChild(es);
                 }
                 card.appendChild(m);
-                if (r.perFile && r.perFile.length) card.appendChild(tcBuildVideoLine(r, !!opts.inGroup));
+                let vlineEl = null; // (v29.27.1) زرار التفاصيل بيتحط جوه صف الفيديو
+                if (r.perFile && r.perFile.length) { vlineEl = tcBuildVideoLine(r, !!opts.inGroup); card.appendChild(vlineEl); }
                 if (r.perFile && r.perFile.length > 1) {
                     const pf = document.createElement('div');
-                    pf.className = 'tx-tc-metrics';
+                    pf.className = 'tx-tc-metrics tx-tc-pf';
                     r.perFile.forEach((f, k) => {
                         const rate = f.audioSec > 0 ? ' — ' + (f.segs / (f.audioSec / 60)).toFixed(1) + ' في الدقيقة' : '';
                         const sp = document.createElement('span');
@@ -15848,14 +16403,14 @@
                 }
                 const toggle = document.createElement('button');
                 toggle.className = 'tx-tc-readmore';
-                toggle.textContent = isOpen ? 'Show less' : 'Read more';
+                toggle.textContent = isOpen ? 'إخفاء ▴' : 'تفاصيل ▾';
                 toggle.onclick = () => {
                     const open = more.style.display === 'none';
                     more.style.display = open ? '' : 'none';
-                    toggle.textContent = open ? 'Show less' : 'Read more';
+                    toggle.textContent = open ? 'إخفاء ▴' : 'تفاصيل ▾';
                     if (open) tcOpenCards.add(row.id); else tcOpenCards.delete(row.id);
                 };
-                card.appendChild(toggle);
+                if (vlineEl) vlineEl.appendChild(toggle); else card.appendChild(toggle);
                 card.appendChild(more);
             }
 
@@ -15878,8 +16433,10 @@
             lastBtn.onclick = () => {
                 const ids = workRows.map(r => String(r.id)).filter(id => id !== String(row.id));
                 ids.push(String(row.id));
+                const prev = tcRead(TC_ORDER_KEY, null);
                 saveOrder(ids.concat(readyRows.map(r => String(r.id))));
                 tcShowPanel(tcLastCards);
+                tcUndoToast('اتنقل تاسك ' + row.id + ' للآخر', () => tcUndoOrder(prev));
             };
             const scanBtn = document.createElement('button');
             scanBtn.className = 'tx-tc-mini';
@@ -15887,13 +16444,15 @@
             scanBtn.title = 'فحص التاسك ده لوحده (حتى لو جاهز للتسليم)';
             scanBtn.onclick = () => tcStartScan('all', row.id);
             const openBtn = document.createElement('button');
-            openBtn.className = 'tx-tc-mini';
+            openBtn.className = 'tx-tc-mini primary';
             openBtn.textContent = '▶ فتح';
             openBtn.onclick = async () => {
-                overlay.remove();
+                // (v29.29.0) المركز بيفضل مفتوح (التاسك بيتفتح في تاب تانية) - لو الصفحة نفسها اتنقلت هتتقفل لوحدها
                 const fresh = await tcFindCardAnyPage(row.id, row.page);
                 if (!fresh) { showToast('التاسك مش ظاهر في القايمة دلوقتي', true); return; }
+                tcMarkWorked(row.id); // (v29.28.0)
                 fresh.btn.click();
+                setTimeout(() => tcRefreshPanel(true), 350);
             };
             foot.appendChild(noteInput);
             if (!opts.inGroup) foot.appendChild(lastBtn);
@@ -15901,23 +16460,19 @@
             foot.appendChild(openBtn);
             card.appendChild(foot);
 
-            // ---- drag (من الهيدر بس عشان خانة الملاحظة تفضل شغالة) ----
-            head.addEventListener('mousedown', () => { if (!opts.noDrag && !body.classList.contains('tx-tc-filtering')) card.draggable = true; }); // (v29.19.0) السحب متوقف أثناء الفلتر عشان الترتيب ما يتلخبطش
-            head.addEventListener('mouseup', () => { card.draggable = false; });
-            card.addEventListener('dragstart', (e) => {
-                if (!card.draggable) { e.preventDefault(); return; }
-                card.classList.add('dragging');
-                try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(row.id)); } catch (er) { /* تجاهل */ }
-            });
-            card.addEventListener('dragend', () => {
-                card.classList.remove('dragging'); card.draggable = false;
-                saveOrder(Array.from(body.querySelectorAll('.tx-tc-card')).map(c => c.dataset.id));
+            // ---- drag (v29.27.2): pointer events بدل HTML5 drag - الكارت بيتحرك معاك فعلاً والباقي بيزحلق، من الهيدر بس (الماوس) أو من ⋮⋮ (لمس) ----
+            head.addEventListener('pointerdown', (e) => {
+                if (opts.noDrag || body.classList.contains('tx-tc-filtering')) return; // السحب متوقف أثناء الفلتر عشان الترتيب ما يتلخبطش
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+                if (e.target.closest && e.target.closest('button, input, textarea, select, a')) return;
+                if (e.pointerType !== 'mouse' && !(e.target.closest && e.target.closest('.tx-tc-grip'))) return;
+                tcDragStart(card, e, { body, onCommit: () => { const prev = tcRead(TC_ORDER_KEY, null); saveOrder(Array.from(body.querySelectorAll('.tx-tc-card')).map(c => c.dataset.id)); tcUndoToast('اتغيّر ترتيب التاسكات', () => tcUndoOrder(prev)); } });
             });
             return card;
         };
 
         // (v29.20.0) هيدر قسم قابل للطي: السهم + العنوان + العدد - والحالة بتتحفظ
-        const makeSec = (key, title, count) => {
+        const makeSec = (key, title, count, secList) => {
             const sec = document.createElement('div');
             sec.className = 'tx-tc-sec' + (collapsedState[key] ? ' collapsed' : '');
             sec.dataset.key = key;
@@ -15925,6 +16480,8 @@
             const chev = document.createElement('span'); chev.className = 'chev'; chev.textContent = '▾'; sec.appendChild(chev);
             sec.appendChild(document.createTextNode(title));
             const cnt = document.createElement('span'); cnt.className = 'cnt'; cnt.textContent = count; sec.appendChild(cnt);
+            const secTotal = (secList || []).reduce((a, x) => a + ((x.r && !x.r.error && x.r.audioSec > 0) ? x.r.audioSec : 0), 0); // (v29.27.4) إجمالي وقت الصوت
+            if (secTotal > 0) { const tm = document.createElement('span'); tm.className = 'tx-tc-sectime'; tm.title = 'إجمالي مدة الصوت في القسم'; tm.textContent = '🎧 ' + tcFmtTotal(secTotal); sec.appendChild(tm); }
             sec.addEventListener('click', () => {
                 const nowCollapsed = !sec.classList.contains('collapsed');
                 sec.classList.toggle('collapsed', nowCollapsed);
@@ -15932,38 +16489,28 @@
                 st[key] = nowCollapsed;
                 tcWrite(TC_COLLAPSE_KEY, st);
                 applyFilter();
+                const lst = sec.nextElementSibling; // (v29.27.1) حركة خفيفة لما القسم يتفتح
+                if (lst && !nowCollapsed) { lst.classList.remove('tx-tc-anim'); void lst.offsetWidth; lst.classList.add('tx-tc-anim'); }
             });
             body.appendChild(sec);
             return sec;
         };
         const makeList = (list, isReady, title, key) => {
             if (!list.length) return;
-            makeSec(key, title, list.length);
+            makeSec(key, title, list.length, list);
             const box = document.createElement('div');
             box.className = 'tx-tc-list';
             const renumber = () => { if (!isReady) Array.from(box.children).forEach((c, i) => { const n = c.querySelector('.tx-tc-num'); if (n) n.textContent = i + 1; }); };
             list.forEach(r => box.appendChild(buildCard(r)));
             renumber();
-            box.addEventListener('dragover', (e) => {
-                const dragging = box.querySelector('.tx-tc-card.dragging');
-                if (!dragging) return; // السحب جوه نفس القايمة بس
-                e.preventDefault();
-                const others = Array.from(box.children).filter(c => c !== dragging);
-                const after = others.find(c => { const b = c.getBoundingClientRect(); return e.clientY < b.top + b.height / 2; });
-                if (after) { if (dragging.nextSibling !== after) box.insertBefore(dragging, after); }
-                else if (box.lastChild !== dragging) box.appendChild(dragging);
-                renumber();
-                const bb = body.getBoundingClientRect();
-                if (e.clientY < bb.top + 50) body.scrollBy(0, -16); else if (e.clientY > bb.bottom - 50) body.scrollBy(0, 16);
-            });
-            box.addEventListener('drop', (e) => e.preventDefault());
+            box._txRenumber = renumber; box._txNumbered = !isReady; // (v29.27.2) للسحب الجديد (ترقيم لحظي)
             body.appendChild(box);
         };
         // (v29.18.0) عرض مجمّع بالفيديو: كل فيديو فيه أكتر من تاسك = كارت جروب واحد (اللي بيكملوا بعض ورا بعض)
         const makeGrouped = (list, title, key) => {
             if (!list.length) return;
             const items = tcGroupRows(list);
-            makeSec(key, title, list.length);
+            makeSec(key, title, list.length, list);
             const wrap = document.createElement('div');
             wrap.className = 'tx-tc-groups';
             items.forEach(it => {
@@ -15986,8 +16533,10 @@
                 mkMini('📌 للآخر', () => {
                     const mine = it.members.map(m => String(m.row.id));
                     const ids = workRows.map(r => String(r.id)).filter(id => !mine.includes(id)).concat(mine);
+                    const prev = tcRead(TC_ORDER_KEY, null);
                     saveOrder(ids.concat(readyRows.map(r => String(r.id))));
                     tcShowPanel(tcLastCards);
+                    tcUndoToast('اتنقل الفيديو للآخر', () => tcUndoOrder(prev));
                 });
                 g.appendChild(vh);
                 const chips = document.createElement('div');
@@ -16013,11 +16562,40 @@
         makeList(readyRows, true, '📤 جاهز للتسليم', 'ready');
         buildWork(unscannedRows, '⚪ لسه ما اتفحصش', 'unscanned');
         applyFilter(); // (v29.19.0)
+        const hereCard = lastId ? body.querySelector('.tx-tc-card[data-id="' + lastId + '"]') : null; // (v29.28.0)
+        const jumpToHere = () => {
+            const c = body.querySelector('.tx-tc-card[data-id="' + lastId + '"]');
+            if (!c) return;
+            if (c.style.display === 'none') { tcFilterState = { level: 'all', q: '' }; applyFilter(); }
+            const sec = c.closest('.tx-tc-list'); if (sec && sec.style.display === 'none') { const hd = sec.previousElementSibling; if (hd && hd.classList.contains('collapsed')) hd.click(); }
+            c.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            c.classList.remove('tc-flash'); void c.offsetWidth; c.classList.add('tc-flash');
+        };
+        if (hereCard) {
+            const hb = document.createElement('button');
+            hb.className = 'tx-tc-fbtn tx-tc-herebtn';
+            hb.textContent = '📍 كنت فين';
+            hb.title = 'روح لآخر تاسك فتحته';
+            hb.onclick = jumpToHere;
+            const fb0 = body.querySelector('.tx-tc-filter'); if (fb0) fb0.insertBefore(hb, fb0.querySelector('.tx-tc-search'));
+            if (freshOpen) setTimeout(jumpToHere, 120);
+        }
 
+        if (freshOpen) { // (v29.27.4) حركة دخول متتالية - أول فتح بس
+            box.classList.add('tc-enter');
+            body.querySelectorAll('.tx-tc-list > .tx-tc-card, .tx-tc-groups > *').forEach((el, i) => el.style.setProperty('--i', Math.min(i, 9)));
+        }
         box.appendChild(header);
         box.appendChild(body);
+        const topBtn = document.createElement('button'); // (v29.27.4) ↑ لفوق
+        topBtn.className = 'tx-tc-top'; topBtn.textContent = '↑ لفوق'; topBtn.title = 'ارجع لأول القايمة';
+        topBtn.onclick = () => body.scrollTo({ top: 0, behavior: 'smooth' });
+        let topRaf = 0;
+        body.addEventListener('scroll', () => { if (topRaf) return; topRaf = requestAnimationFrame(() => { topRaf = 0; topBtn.classList.toggle('show', body.scrollTop > 260); }); });
+        box.appendChild(topBtn);
         overlay.appendChild(box);
         document.body.appendChild(overlay);
+        tcPanelSigVal = tcPanelSig(cards); // (v29.29.1)
     }
 
     setInterval(() => { tcTick(); }, 800);

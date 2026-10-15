@@ -14495,15 +14495,6 @@
 
     // ---------- (v29.13.0) قراءة سيجمنتات الملف: لفة واحدة على صفحات Navigation (زي F2) - من غير أزمنة ----------
     async function tcCollectRowsLite() {
-        // (v29.26.19) قراءة لحظية من بيانات الموقع (من غير لف على صفحات Navigation) - لو فشل فحص الأمان بنكمّل بالطريقة القديمة
-        const fastItems = txVueFastSnapshot();
-        if (fastItems) {
-            const fastInfo = {};
-            fastItems.forEach(it => {
-                fastInfo[it.serial] = { serial: it.serial, text: it.raw.trim(), hasAttrTag: it.tags.length > 0, attrTagTexts: it.tags, regionId: it.regionId };
-            });
-            return { info: fastInfo, navTotal: tcNavTotal() };
-        }
         const info = {};
         const grab = () => {
             document.querySelectorAll('#changyuliu_table > tr').forEach(row => {

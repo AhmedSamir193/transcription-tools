@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         أدوات التفريغ - نسخ + سكرول + تاجات + فحص مسافات + دمج + لصق ذكي + فحص تاجات + حساب زمن + فحص شامل + فحص حي
 // @namespace    annotation-tools
-// @version      29.29.1
+// @version      29.33.0
 // @match        http://123.60.141.64:10016/*
 // @grant        none
 // (v26.0) @updateURL/@downloadURL: كانوا مش موجودين خالص، فأي تحديث للسكريبت كان لازم يتنزل يدوي.
@@ -1338,55 +1338,98 @@
     // (gray=100, alpha=0.12) - أسود 0->~12، أبيض 255->~236 (يعادل تقريباً #0c0c0c / #ececec، ratio
     // حوالي 18:1 - لسه أخف بشكل ملموس من 21:1 الأصلية بس من غير الإحساس بـ"طبقة تغطي الشاشة"). لو
     // لسه حاسس إنه قوي أو ضعيف بعد التجربة، سهل نظبطه تاني - بس رقم واحد (alpha) بيتغيّر.
+    // (v29.30.1) "راحة العين" (كانت "تباين مريح"): الطبقة الرمادية الشفافة القديمة اتشالت خالص. المشكلة فيها إنها بترفع الأسود
+    // وتغطي كل بكسل بنفس النسبة، فالصفحة بتبان ضبابية/مغبّشة (وده اللي كان بيتعب العين). البديل: backdrop-filter بيعمل
+    // "تظبيط ألوان" للي ورا من غير أي طبقة لون ولا blur:
+    //   saturate   → بيهدّي الألوان الصارخة (الأخضر النيون بتاع الويفورم، الأحمر/الوردي في الحدود) من غير ما يمسح معناها
+    //   brightness → بيقلل وهج الأبيض (النص الأبيض على الأسود هو أكتر حاجة بتعمل "هالة" حوالين الحروف) والأسود بيفضل أسود نضيف
+    //   sepia خفيفة → بتدفّي الألوان وتقلل الأزرق (الضوء الأكتر إجهاداً قبل النوم/في الشغل الطويل)
+    // مفيش blur، ولا contrast reduction، فالحروف بتفضل حادة. القيم الـ3 هي رقمين تلاتة بس لو حابب تظبطهم تاني (CONTRAST_LEVEL_META).
+    // المفتاح القديم (tx-contrast-mode-enabled) لسه بيتكتب للتوافق، ولو المفتاح الجديد مش موجود بنقرا القديم ('1' = مريح).
     const CONTRAST_MODE_STORAGE_KEY = 'tx-contrast-mode-enabled';
-    const CONTRAST_OVERLAY_BG = 'rgba(100,100,100,0.12)';
+    const CONTRAST_LEVEL_STORAGE_KEY = 'tx-contrast-level';
+    const CONTRAST_LEVELS = ['off', 'soft', 'strong'];
+    const CONTRAST_LEVEL_META = {
+        off:    { name: 'متوقف', filter: null,                                                         hint: 'ألوان الموقع الأصلية' },
+        soft:   { name: 'مريح',  filter: 'saturate(0.80) brightness(0.93) sepia(0.10)',                 hint: 'ألوان أهدأ ووهج أبيض أقل - من غير أي طبقة ضبابية' },
+        strong: { name: 'ليلي',  filter: 'saturate(0.58) brightness(0.84) sepia(0.22)',                 hint: 'ألوان مطفية أكتر ودفء أعلى - للشغل الطويل أو الإضاءة الضعيفة' }
+    };
 
     function ensureContrastOverlay() {
         let el = document.getElementById('tx-contrast-overlay');
         if (!el) {
             el = document.createElement('div');
             el.id = 'tx-contrast-overlay';
-            el.style.cssText = 'position:fixed; inset:0; z-index:99000; pointer-events:none;' +
-                ' background:' + CONTRAST_OVERLAY_BG + '; opacity:0; transition:opacity 0.25s ease;';
+            // الـdiv نفسه شفاف تماماً - كل التأثير من الـbackdrop-filter. visibility:hidden وهو مقفول عشان مياخدش GPU
+            el.style.cssText = 'position:fixed; inset:0; z-index:99000; pointer-events:none; background:transparent;' +
+                ' opacity:0; visibility:hidden; transition:opacity 0.3s ease, visibility 0s linear 0.3s;';
             document.body.appendChild(el);
         }
 
         return el;
     }
 
-    function applyContrastMode(enabled) {
-        ensureContrastOverlay().style.opacity = enabled ? '1' : '0';
+    function applyContrastLevel(level) {
+        const meta = CONTRAST_LEVEL_META[level] || CONTRAST_LEVEL_META.off;
+        const el = ensureContrastOverlay();
+        if (meta.filter) {
+            el.style.backdropFilter = meta.filter;
+            el.style.webkitBackdropFilter = meta.filter;
+            el.style.visibility = 'visible';
+            el.style.transition = 'opacity 0.3s ease, visibility 0s';
+            el.style.opacity = '1';
+        } else {
+            el.style.transition = 'opacity 0.3s ease, visibility 0s linear 0.3s';
+            el.style.opacity = '0';
+            el.style.visibility = 'hidden';
+        }
     }
 
+    // توافق مع أي استدعاء قديم (true = مريح / false = متوقف)
+    function applyContrastMode(enabled) {
+        applyContrastLevel(enabled ? 'soft' : 'off');
+    }
+
+    let contrastLevel = 'off';
     let contrastModeEnabled = false;
-    let contrastToggleBtnRef = null; // (v28.17) دلوقتي بيشاور على صف "تباين مريح" جوه قايمة "🧰 أدوات سريعة" المدمجة، مش ودجت مستقل
+    let contrastToggleBtnRef = null; // بيشاور على حقل "راحة العين" (segmented control) جوه قايمة Quick Tools
 
     function updateContrastToggleUI() {
-        const btn = contrastToggleBtnRef;
-        if (!btn) return;
-        const icon = btn.querySelector('.tx-qt-icon');
-        const label = btn.querySelector('.tx-qt-label');
-        if (icon) icon.textContent = contrastModeEnabled ? '◐' : '○';
-        if (label) label.textContent = 'تباين مريح: ' + (contrastModeEnabled ? 'شغال' : 'متوقف');
-        btn.classList.toggle('tx-qt-on', contrastModeEnabled);
-        btn.title = contrastModeEnabled
-            ? 'وضع التباين المريح شغال (تخفيف حدة الأسود/الأبيض الصرف) - الضغط لإيقافه'
-            : 'وضع التباين المريح متوقف - الضغط لتشغيله';
+        const field = contrastToggleBtnRef;
+        if (!field) return;
+        qtSetSegmentActive(field, contrastLevel);
+        field.classList.toggle('tx-qt-on', contrastLevel !== 'off');
     }
 
-    function toggleContrastMode() {
-        contrastModeEnabled = !contrastModeEnabled;
+    function setContrastLevel(level) {
+        if (!CONTRAST_LEVELS.includes(level) || level === contrastLevel) return;
+        contrastLevel = level;
+        contrastModeEnabled = level !== 'off';
+        txSafeSetItem(CONTRAST_LEVEL_STORAGE_KEY, level);
         txSafeSetItem(CONTRAST_MODE_STORAGE_KEY, contrastModeEnabled ? '1' : '0');
-        applyContrastMode(contrastModeEnabled);
-        showToast(contrastModeEnabled ? 'وضع التباين المريح شغال ✅' : 'وضع التباين المريح متوقف ⏸️');
+        applyContrastLevel(level);
+        showToast(level === 'off' ? 'راحة العين متوقفة ⏸️' : 'راحة العين: ' + CONTRAST_LEVEL_META[level].name + ' ✅');
         updateContrastToggleUI();
     }
 
-    // (v28.17) بترجع تقرأ حالة التباين من localStorage وتطبّقها فورًا لحظة تحميل الصفحة - بس من غير
-    // ما تبني ودجت مستقل زي الأول، الودجت دمجناه جوه "🧰 أدوات سريعة" (شوف addQuickToolsWidget تحت).
+    // بتلف على المستويات الـ3 (متوقف ← مريح ← ليلي) - محتفظ بيها للتوافق
+    function toggleContrastMode() {
+        const idx = CONTRAST_LEVELS.indexOf(contrastLevel);
+        setContrastLevel(CONTRAST_LEVELS[(idx + 1) % CONTRAST_LEVELS.length]);
+    }
+
+    // بترجع تقرأ الحالة من localStorage وتطبّقها فورًا لحظة تحميل الصفحة
     function initContrastModeState() {
-        contrastModeEnabled = localStorage.getItem(CONTRAST_MODE_STORAGE_KEY) === '1';
-        applyContrastMode(contrastModeEnabled);
+        let saved = null;
+        try { saved = localStorage.getItem(CONTRAST_LEVEL_STORAGE_KEY); } catch (e) { /* تجاهل */ }
+        if (!CONTRAST_LEVELS.includes(saved)) {
+            let legacy = null;
+            try { legacy = localStorage.getItem(CONTRAST_MODE_STORAGE_KEY); } catch (e) { /* تجاهل */ }
+            saved = legacy === '1' ? 'soft' : 'off';
+        }
+        contrastLevel = saved;
+        contrastModeEnabled = saved !== 'off';
+        applyContrastLevel(contrastLevel);
     }
 
     // ==================== قايمة منسدلة مخصّصة بالكامل بدل الـ<select> الأصلي (v28.8) ====================
@@ -1965,156 +2008,170 @@
 
     // ==================== واجهة نتائج - Glassmorphism داكن (v10.0) ====================
     function ensurePanelStyles() {
+        ensurePopupSystem(); // (v29.32.0) tokens + طبقة الـpopup الموحّدة + تحويل الإيموجي لأيقونات
         if (document.getElementById('tx-panel-style')) return;
         const style = document.createElement('style');
         style.id = 'tx-panel-style';
         style.textContent = `
+
+            /* ===== (v29.32.0) نظام الـPopup الموحّد - كله على tokens نظام التصميم (--tx-*) ===== */
             .tx-panel-overlay {
-                position: fixed; inset: 0; background: rgba(6,6,10,0.5);
-                backdrop-filter: blur(6px); z-index: 200000;
+                position: fixed; inset: 0; background: rgba(4,6,10,0.55);
+                backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); z-index: 200000;
                 display: flex; align-items: center; justify-content: center;
-                animation: tx-fade-in 0.18s ease;
+                animation: tx-fade-in 0.16s var(--tx-ease);
             }
             @keyframes tx-fade-in { from { opacity: 0; } to { opacity: 1; } }
-            @keyframes tx-pop-in { from { transform: scale(0.94) translateY(10px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
+            @keyframes tx-pop-in { from { transform: scale(0.97) translateY(8px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
             .tx-panel-box {
                 width: 640px; max-width: 92vw; max-height: 82vh;
-                background: linear-gradient(165deg, rgba(32,32,42,0.78), rgba(14,14,19,0.88));
-                backdrop-filter: blur(26px) saturate(180%);
-                -webkit-backdrop-filter: blur(26px) saturate(180%);
-                border: 1px solid rgba(255,255,255,0.12);
-                border-radius: 20px;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(124,58,237,0.14), inset 0 1px 0 rgba(255,255,255,0.08);
+                background: var(--tx-surface-0);
+                backdrop-filter: blur(16px) saturate(160%);
+                -webkit-backdrop-filter: blur(16px) saturate(160%);
+                border: 1px solid rgba(var(--tx-accent), 0.3);
+                border-radius: var(--tx-radius-lg);
+                box-shadow: var(--tx-shadow-pop);
                 display: flex; flex-direction: column;
                 overflow: hidden;
-                font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+                font-family: var(--tx-font); color: var(--tx-text);
                 direction: rtl;
-                animation: tx-pop-in 0.22s cubic-bezier(0.2,0.8,0.2,1);
+                animation: tx-pop-in 0.18s var(--tx-ease);
                 position: relative;
             }
-            .tx-panel-box::before {
-                content: '';
-                position: absolute; top: 0; left: 14%; right: 14%; height: 1px;
-                background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
-                pointer-events: none;
-            }
             .tx-panel-header {
-                display: flex; align-items: center; justify-content: space-between;
-                padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,0.06);
+                display: flex; align-items: center; justify-content: space-between; gap: 10px;
+                padding: 12px 14px; border-bottom: 1px solid var(--tx-border);
             }
-            .tx-panel-title { color: #fff; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+            .tx-panel-title { color: var(--tx-text); font: 800 14px var(--tx-font); display: flex; align-items: center; gap: 8px; }
+            .tx-panel-title > .tx-emo:first-child:not(.is-ok):not(.is-warn):not(.is-danger):not(.is-info) { color: rgb(var(--tx-accent)); }
             .tx-panel-badge {
-                background: rgba(255,255,255,0.1); color: #cbd5e1; font-size: 11px;
-                padding: 2px 9px; border-radius: 20px; font-weight: 700;
+                background: var(--tx-surface-2); color: var(--tx-text-dim); font: 800 10.5px/16px var(--tx-font);
+                padding: 1px 9px; border-radius: 999px; font-variant-numeric: tabular-nums;
             }
-            .tx-panel-badge.pulse { background: rgba(239,68,68,0.22); color: #fca5a5; animation: tx-badge-pulse 1.8s infinite; }
+            .tx-panel-badge.pulse { background: rgba(var(--tx-danger), 0.18); color: #fecaca; animation: tx-badge-pulse 1.8s infinite; }
             @keyframes tx-badge-pulse {
-                0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.45); }
-                70% { box-shadow: 0 0 0 7px rgba(239,68,68,0); }
-                100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+                0% { box-shadow: 0 0 0 0 rgba(var(--tx-danger), 0.45); }
+                70% { box-shadow: 0 0 0 7px rgba(var(--tx-danger), 0); }
+                100% { box-shadow: 0 0 0 0 rgba(var(--tx-danger), 0); }
             }
             .tx-panel-actions { display: flex; align-items: center; gap: 8px; }
             .tx-panel-btn {
-                border: none; border-radius: 10px; padding: 7px 13px; font-size: 11.5px; font-weight: 700;
-                cursor: pointer; transition: all 0.15s ease; color: #fff;
+                display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+                padding: 6px 12px; border-radius: var(--tx-radius-md); cursor: pointer; white-space: nowrap;
+                background: var(--tx-surface-1); border: 1px solid var(--tx-border); color: var(--tx-text);
+                font: 700 11.5px var(--tx-font);
+                transition: background 0.15s var(--tx-ease), border-color 0.15s var(--tx-ease), box-shadow 0.15s var(--tx-ease), transform 0.15s var(--tx-ease);
             }
-            .tx-panel-btn.copy {
-                background: linear-gradient(135deg, rgba(124,58,237,0.55), rgba(99,102,241,0.4));
-                border: 1px solid rgba(255,255,255,0.14);
-            }
-            .tx-panel-btn.copy:hover { filter: brightness(1.2); box-shadow: 0 0 14px rgba(124,58,237,0.35); }
-            .tx-panel-btn.fix { background: linear-gradient(135deg, rgba(16,185,129,0.6), rgba(5,150,105,0.45)); border: 1px solid rgba(255,255,255,0.14); }
-            .tx-panel-btn.fix:hover { filter: brightness(1.15); box-shadow: 0 0 14px rgba(16,185,129,0.35); }
-            .tx-panel-btn:disabled { opacity: 0.55; cursor: not-allowed; filter: none !important; box-shadow: none !important; }
+            .tx-panel-btn:hover { background: var(--tx-surface-2); border-color: rgba(var(--tx-accent), 0.65); }
+            .tx-panel-btn:focus-visible { outline: 2px solid rgba(var(--tx-accent), 0.85); outline-offset: 1px; }
+            .tx-panel-btn.copy   { background: rgba(var(--tx-accent), 0.14); border-color: rgba(var(--tx-accent), 0.5); color: #ccfbf1; }
+            .tx-panel-btn.fix    { background: rgba(var(--tx-ok), 0.13);     border-color: rgba(var(--tx-ok), 0.5);     color: #bbf7d0; }
+            .tx-panel-btn.warn   { background: rgba(var(--tx-warn), 0.14);   border-color: rgba(var(--tx-warn), 0.55);   color: #fde68a; }
+            .tx-panel-btn.danger { background: rgba(var(--tx-danger), 0.14); border-color: rgba(var(--tx-danger), 0.55); color: #fecaca; }
+            .tx-panel-btn.info   { background: rgba(var(--tx-info), 0.13);   border-color: rgba(var(--tx-info), 0.5);   color: #bfdbfe; }
+            .tx-panel-btn.review { background: rgba(var(--tx-review), 0.14); border-color: rgba(var(--tx-review), 0.5); color: #ddd6fe; }
+            .tx-panel-btn.copy:hover   { background: rgba(var(--tx-accent), 0.24); box-shadow: 0 0 10px rgba(var(--tx-accent), 0.35); }
+            .tx-panel-btn.fix:hover    { background: rgba(var(--tx-ok), 0.24);     border-color: rgba(var(--tx-ok), 0.85);     box-shadow: 0 0 10px rgba(var(--tx-ok), 0.35); }
+            .tx-panel-btn.warn:hover   { background: rgba(var(--tx-warn), 0.24);   border-color: rgba(var(--tx-warn), 0.85);   box-shadow: 0 0 10px rgba(var(--tx-warn), 0.35); }
+            .tx-panel-btn.danger:hover { background: rgba(var(--tx-danger), 0.24); border-color: rgba(var(--tx-danger), 0.85); box-shadow: 0 0 10px rgba(var(--tx-danger), 0.35); }
+            .tx-panel-btn.info:hover   { background: rgba(var(--tx-info), 0.24);   border-color: rgba(var(--tx-info), 0.85);   box-shadow: 0 0 10px rgba(var(--tx-info), 0.35); }
+            .tx-panel-btn.review:hover { background: rgba(var(--tx-review), 0.24); border-color: rgba(var(--tx-review), 0.85); box-shadow: 0 0 10px rgba(var(--tx-review), 0.35); }
+            .tx-panel-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none !important; }
             .tx-panel-btn.close-icon {
                 width: 28px; height: 28px; padding: 0; border-radius: 50%;
-                background: rgba(255,255,255,0.06); color: #cbd5e1; font-size: 13px;
-                display: flex; align-items: center; justify-content: center;
-                border: 1px solid rgba(255,255,255,0.1);
+                background: var(--tx-surface-1); color: var(--tx-text-dim); border: 1px solid var(--tx-border);
             }
-            .tx-panel-btn.close-icon:hover { background: rgba(239,68,68,0.18); color: #f87171; border-color: rgba(239,68,68,0.4); }
-            .tx-panel-body { padding: 12px 16px 16px; overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: rgba(167,139,250,0.4) transparent; }
+            .tx-panel-btn.close-icon:hover { background: rgba(var(--tx-danger), 0.18); color: #fecaca; border-color: rgba(var(--tx-danger), 0.5); box-shadow: none; }
+            .tx-panel-footer {
+                display: flex; justify-content: flex-end; align-items: center; gap: 10px;
+                padding: 12px 14px; border-top: 1px solid var(--tx-border);
+            }
+            .tx-panel-body { padding: 12px 14px 14px; overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: rgba(148,163,184,0.35) transparent; }
             .tx-panel-body:focus, .tx-panel-body:focus-visible { outline: none !important; box-shadow: none !important; }
             .tx-panel-empty {
-                color: #34d399; font-size: 13px; text-align: center; padding: 30px 18px; font-weight: 700;
-                background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); border-radius: 16px;
+                color: #bbf7d0; font-size: 13px; text-align: center; padding: 28px 18px; font-weight: 700;
+                background: rgba(var(--tx-ok), 0.08); border: 1px solid rgba(var(--tx-ok), 0.25); border-radius: var(--tx-radius-lg);
             }
             .tx-panel-heading {
-                color: #fbbf24; font-size: 12.5px; font-weight: 700; margin: 14px 0 8px;
+                color: #99f6e4; font: 800 12.5px var(--tx-font); margin: 14px 0 8px;
                 display: flex; align-items: center; gap: 6px;
             }
             .tx-panel-heading:first-child { margin-top: 0; }
             .tx-panel-item {
                 display: flex; align-items: center; justify-content: space-between; gap: 8px;
-                background: rgba(255,255,255,0.035);
+                background: var(--tx-surface-1);
                 border-right: 3px solid rgba(148,163,184,0.4);
-                border-radius: 10px; padding: 8px 10px; margin-bottom: 6px;
-                color: #e2e8f0; font-size: 12.5px; line-height: 1.6;
-                transition: all 0.15s ease;
+                border-radius: var(--tx-radius-md); padding: 8px 10px; margin-bottom: 6px;
+                color: var(--tx-text); font-size: 12.5px; line-height: 1.6;
+                transition: background 0.15s var(--tx-ease), border-color 0.15s var(--tx-ease), box-shadow 0.15s var(--tx-ease);
             }
-            .tx-panel-item.warn { border-right-color: #ef4444; background: rgba(239,68,68,0.07); }
-            .tx-panel-item.info { border-right-color: #38bdf8; background: rgba(56,189,248,0.07); }
-            .tx-panel-item.ok { border-right-color: #22c55e; background: rgba(34,197,94,0.07); }
-            .tx-panel-item:hover { background: rgba(255,255,255,0.065); }
+            .tx-panel-item.warn { border-right-color: rgb(var(--tx-danger)); background: rgba(var(--tx-danger), 0.07); }
+            .tx-panel-item.info { border-right-color: rgb(var(--tx-info));   background: rgba(var(--tx-info), 0.07); }
+            .tx-panel-item.ok   { border-right-color: rgb(var(--tx-ok));     background: rgba(var(--tx-ok), 0.07); }
+            .tx-panel-item:hover { background: var(--tx-surface-2); }
             .tx-panel-item.jumpable { cursor: pointer; }
-            .tx-panel-item.jumpable:hover { border-right-color: #a78bfa; box-shadow: inset 0 0 0 1px rgba(167,139,250,0.35); }
+            .tx-panel-item.jumpable:hover { border-right-color: rgb(var(--tx-accent)); box-shadow: inset 0 0 0 1px rgba(var(--tx-accent), 0.35); }
             .tx-panel-item-text { flex: 1; }
             .tx-item-copy {
-                opacity: 0; flex-shrink: 0; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
-                border-radius: 7px; color: #e2e8f0; font-size: 10.5px; padding: 3px 7px; cursor: pointer; transition: all 0.15s ease;
+                display: inline-flex; align-items: center; gap: 4px;
+                opacity: 0; flex-shrink: 0; background: var(--tx-surface-2); border: 1px solid var(--tx-border-strong);
+                border-radius: var(--tx-radius-sm); color: var(--tx-text); font: 700 10.5px var(--tx-font); padding: 3px 8px; cursor: pointer;
+                transition: opacity 0.15s var(--tx-ease), background 0.15s var(--tx-ease), border-color 0.15s var(--tx-ease);
             }
             .tx-panel-item:hover .tx-item-copy { opacity: 1; }
-            .tx-item-copy:hover { background: rgba(124,58,237,0.4); border-color: rgba(167,139,250,0.55); }
+            .tx-item-copy:hover { background: rgba(var(--tx-accent), 0.24); border-color: rgba(var(--tx-accent), 0.65); }
             .tx-panel-num {
-                display: inline-block; background: rgba(255,255,255,0.12); color: #fff;
-                padding: 1px 7px; border-radius: 6px; font-weight: 700; font-size: 11.5px;
+                display: inline-block; background: var(--tx-surface-2); color: #fff;
+                padding: 1px 7px; border-radius: 6px; font-weight: 800; font-size: 11.5px; font-variant-numeric: tabular-nums;
             }
             .tx-panel-body::-webkit-scrollbar { width: 6px; }
             .tx-panel-body::-webkit-scrollbar-track { background: transparent; }
-            .tx-panel-body::-webkit-scrollbar-thumb { background: rgba(167,139,250,0.35); border-radius: 10px; }
-            .tx-panel-body::-webkit-scrollbar-thumb:hover { background: rgba(167,139,250,0.55); }
+            .tx-panel-body::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.35); border-radius: 10px; }
+            .tx-panel-body::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.55); }
 
-            /* توست بأسلوب Dynamic Island */
+            /* توست - نفس شكل باقي الـpopups (surface + حدود بلون الحالة) */
             .tx-panel-toast {
                 position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
                 display: flex; align-items: center; gap: 10px;
-                background: linear-gradient(160deg, rgba(20,20,26,0.86), rgba(10,10,14,0.93));
-                backdrop-filter: blur(20px) saturate(180%);
-                -webkit-backdrop-filter: blur(20px) saturate(180%);
-                border: 1px solid rgba(16,185,129,0.4);
-                border-radius: 24px; padding: 11px 20px 11px 16px;
+                background: var(--tx-surface-0);
+                backdrop-filter: blur(16px) saturate(160%);
+                -webkit-backdrop-filter: blur(16px) saturate(160%);
+                border: 1px solid rgba(var(--tx-ok), 0.45);
+                border-radius: var(--tx-radius-lg); padding: 10px 16px 10px 14px;
                 width: max-content !important; max-width: min(92vw, 520px) !important; box-sizing: border-box !important;
                 z-index: 300000; overflow: hidden;
-                box-shadow: 0 12px 30px rgba(0,0,0,0.5), 0 0 25px rgba(16,185,129,0.22), inset 0 1px 0 rgba(255,255,255,0.08);
-                direction: rtl; font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
-                animation: tx-toast-spring 0.4s cubic-bezier(0.34,1.56,0.64,1);
+                box-shadow: var(--tx-shadow-pop);
+                direction: rtl; font-family: var(--tx-font); color: var(--tx-text);
+                animation: tx-toast-spring 0.3s var(--tx-ease);
             }
-            .tx-panel-toast.error { border-color: rgba(239,68,68,0.45); box-shadow: 0 12px 30px rgba(0,0,0,0.5), 0 0 25px rgba(239,68,68,0.22), inset 0 1px 0 rgba(255,255,255,0.08); }
-            @keyframes tx-toast-spring { from { transform: translate(-50%,26px) scale(0.92); opacity: 0; } to { transform: translate(-50%,0) scale(1); opacity: 1; } }
+            .tx-panel-toast.error { border-color: rgba(var(--tx-danger), 0.5); }
+            @keyframes tx-toast-spring { from { transform: translate(-50%,18px) scale(0.96); opacity: 0; } to { transform: translate(-50%,0) scale(1); opacity: 1; } }
             .tx-toast-icon {
                 width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
                 display: flex; align-items: center; justify-content: center; font-size: 12px;
-                background: rgba(16,185,129,0.16); color: #10B981;
+                background: rgba(var(--tx-ok), 0.16); color: rgb(var(--tx-ok));
             }
-            .tx-panel-toast.error .tx-toast-icon { background: rgba(239,68,68,0.16); color: #f87171; }
-            /* (v23.0) قبل كده الرسالة ما كانش ليها max-width ولا التفاف، فأي توست بنص طويل كان بيتمدد
-               بره حدود الشاشة (خصوصاً على شاشات ضيقة) وبيتقطع بصرياً عند حافة الشكل الكبسولي - النص
-               دلوقتي بيلف على أكتر من سطر جوه عرض معقول بدل ما يخرج بره حدود الشاشة. */
+            .tx-toast-icon .tx-emo { color: inherit; }
+            .tx-panel-toast.error .tx-toast-icon { background: rgba(var(--tx-danger), 0.16); color: rgb(var(--tx-danger)); }
             .tx-toast-text-wrap { display: flex; flex-direction: column; align-items: center; text-align: center; line-height: 1.4; flex: 1 1 auto; min-width: 0; max-width: 100%; unicode-bidi: plaintext; }
             .tx-panel-toast .tx-toast-text-wrap, .tx-panel-toast .tx-toast-text-main, .tx-panel-toast .tx-toast-text-sub { text-align: center !important; }
-            .tx-toast-icon.tx-toast-close { cursor: pointer; border: 0; padding: 0; font-family: inherit; transition: background .15s ease, transform .15s ease; }
-            .tx-toast-icon.tx-toast-close:hover { background: rgba(239,68,68,0.35); transform: scale(1.12); }
+            .tx-toast-icon.tx-toast-close { cursor: pointer; border: 0; padding: 0; font-family: inherit; transition: background .15s var(--tx-ease), transform .15s var(--tx-ease); }
+            .tx-toast-icon.tx-toast-close:hover { background: rgba(var(--tx-danger), 0.35); transform: scale(1.12); }
             .tx-panel-toast { cursor: default; }
             .tx-toast-text-main { color: #fff; font-weight: 700; font-size: 12.5px; white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
-            .tx-toast-num { color: #10B981; font-weight: 800; }
-            .tx-panel-toast.error .tx-toast-num { color: #f87171; }
-            .tx-toast-text-sub { color: rgba(255,255,255,0.55); font-size: 0.85em; margin-top: 2px; white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+            .tx-toast-num { color: rgb(var(--tx-ok)); font-weight: 800; }
+            .tx-panel-toast.error .tx-toast-num { color: rgb(var(--tx-danger)); }
+            .tx-toast-text-sub { color: var(--tx-text-dim); font-size: 0.85em; margin-top: 2px; white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
             .tx-toast-progress {
                 position: absolute; bottom: 0; right: 0; height: 2px; width: 100%;
-                background: #10B981; animation: tx-toast-shrink 2.6s linear forwards;
+                background: rgb(var(--tx-ok)); animation: tx-toast-shrink 2.6s linear forwards;
             }
-            .tx-panel-toast.error .tx-toast-progress { background: #f87171; }
+            .tx-panel-toast.error .tx-toast-progress { background: rgb(var(--tx-danger)); }
             @keyframes tx-toast-shrink { from { width: 100%; } to { width: 0%; } }
+            @media (prefers-reduced-motion: reduce) {
+                .tx-panel-overlay, .tx-panel-box, .tx-panel-toast, .tx-panel-badge.pulse { animation: none; }
+                .tx-panel-btn, .tx-panel-item { transition: none; }
+            }
         `;
         document.head.appendChild(style);
     }
@@ -2134,21 +2191,17 @@
         const style = document.createElement('style');
         style.id = 'tx-confirm-modal-style';
         style.textContent = `
+
             .tx-confirm-box { width: 440px; }
             .tx-confirm-body {
-                padding: 4px 20px 20px; color: #e2e8f0; font-size: 13.5px; line-height: 1.9;
+                padding: 6px 18px 18px; color: var(--tx-text); font-size: 13.5px; line-height: 1.9;
                 white-space: pre-line;
             }
             .tx-confirm-footer {
                 display: flex; justify-content: flex-end; gap: 10px;
-                padding: 14px 18px; border-top: 1px solid rgba(255,255,255,0.06);
+                padding: 12px 14px; border-top: 1px solid var(--tx-border);
             }
-            .tx-confirm-footer .tx-panel-btn { padding: 9px 18px; font-size: 12.5px; }
-            .tx-panel-btn.danger {
-                background: linear-gradient(135deg, rgba(220,38,38,0.65), rgba(185,28,28,0.5));
-                border: 1px solid rgba(255,255,255,0.14);
-            }
-            .tx-panel-btn.danger:hover { filter: brightness(1.15); box-shadow: 0 0 14px rgba(220,38,38,0.4); }
+            .tx-confirm-footer .tx-panel-btn { padding: 8px 18px; font-size: 12.5px; }
         `;
         document.head.appendChild(style);
     }
@@ -2181,8 +2234,7 @@
 
             const cancelBtn = document.createElement('button');
             cancelBtn.className = 'tx-panel-btn';
-            cancelBtn.style.background = 'rgba(255,255,255,0.08)';
-            cancelBtn.textContent = opts.cancelText || 'إلغاء';
+                cancelBtn.textContent = opts.cancelText || 'إلغاء';
 
             const confirmBtn = document.createElement('button');
             confirmBtn.className = 'tx-panel-btn ' + (opts.danger ? 'danger' : 'fix');
@@ -2233,27 +2285,23 @@
         const style = document.createElement('style');
         style.id = 'tx-row-highlight-style';
         style.textContent = `
-            tr.tx-row-error, tr.tx-row-ok, tr.tx-row-warn {
+            /* (v29.32.5) حالة الصف على tokens (--tx-*): أحمر = أي مشكلة (كل المشاكل لازم تتصلح) | أخضر = اتصلح.
+               إطار 1px + خلفية خفيفة بس، من غير شريط جانبي */
+            tr.tx-row-error, tr.tx-row-ok {
+                --tx-row-c: var(--tx-danger, 248,113,113);
+                outline: 1px solid rgba(var(--tx-row-c), 0.38) !important;
                 outline-offset: -1px;
                 border-radius: 8px;
+                background-color: rgba(var(--tx-row-c), 0.055) !important;
                 transition: outline-color 0.25s ease, background-color 0.3s ease;
             }
-            tr.tx-row-error {
-                outline: 1.5px solid rgba(239, 68, 68, 0.55) !important;
-                background-color: rgba(239, 68, 68, 0.045) !important;
-            }
-            tr.tx-row-warn {
-                outline: 1.5px solid rgba(234, 179, 8, 0.55) !important;
-                background-color: rgba(234, 179, 8, 0.045) !important;
-            }
             tr.tx-row-ok {
-                outline: 1.5px solid rgba(34, 197, 94, 0.55) !important;
-                background-color: rgba(34, 197, 94, 0.045) !important;
+                --tx-row-c: var(--tx-ok, 74,222,128);
                 animation: tx-row-ok-fade 4s ease forwards;
             }
             @keyframes tx-row-ok-fade {
-                0% { outline-color: rgba(34,197,94,0.75); background-color: rgba(34,197,94,0.07); }
-                100% { outline-color: rgba(34,197,94,0.2); background-color: rgba(34,197,94,0.01); }
+                0% { outline-color: rgba(var(--tx-ok, 74,222,128), 0.45); background-color: rgba(var(--tx-ok, 74,222,128), 0.08); }
+                100% { outline-color: rgba(var(--tx-ok, 74,222,128), 0.1); background-color: rgba(var(--tx-ok, 74,222,128), 0.01); }
             }
 
             .tx-save-dot {
@@ -2277,11 +2325,14 @@
 
     function setRowStatus(row, status) {
         row.style.outline = '';
-        row.classList.remove('tx-row-error', 'tx-row-warn', 'tx-row-ok');
-        if (status === 'error') row.classList.add('tx-row-error');
-        else if (status === 'warn') row.classList.add('tx-row-warn');
+        row.classList.remove('tx-row-error', 'tx-row-warn', 'tx-row-info', 'tx-row-ok');
+        // (v29.32.5) كل المشاكل لون واحد (أحمر): أي 'warn' أو 'info' بيتعامل كـ'error'
+        if (status === 'error' || status === 'warn' || status === 'info') row.classList.add('tx-row-error');
         else if (status === 'ok') row.classList.add('tx-row-ok');
     }
+
+    // (v29.32.5) كل رسائل المشاكل بنفس الخطورة (أحمر) - طول الحروف والمسافات والإنجليزي والتشكيل كلها strict
+    function txMsgSeverity(msg) { return 'error'; }
 
     // ==================== اختصارات كيبورد لإضافة تاج الـ Attribute وانت جوه السيجمنت (v22.0) ====================
     // Alt+1/2/3/4 بيحاكي ضغطة ماوس حقيقية على خيار التاج في بانل/بوب-أب "Attribute" بتاع الموقع نفسه
@@ -2534,7 +2585,7 @@
                 color: #fff; font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; font-size: 13.5px;
                 direction: rtl; outline: none;
             }
-            .tx-cmdk-input:focus { border-color: rgba(167,139,250,0.6); }
+            .tx-cmdk-input:focus { border-color: rgba(var(--tx-accent),0.6); }
             .tx-cmdk-input::placeholder { color: rgba(255,255,255,0.4); }
             .tx-cmdk-list { max-height: 55vh; overflow-y: auto; padding: 6px; }
             .tx-cmdk-item {
@@ -2542,7 +2593,7 @@
                 cursor: pointer; color: #e2e8f0; font-size: 13px;
                 font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
             }
-            .tx-cmdk-item:hover, .tx-cmdk-item.tx-cmdk-active { background: rgba(124,58,237,0.25); color: #fff; }
+            .tx-cmdk-item:hover, .tx-cmdk-item.tx-cmdk-active { background: rgba(var(--tx-accent),0.25); color: #fff; }
             .tx-cmdk-empty { padding: 24px; text-align: center; color: rgba(255,255,255,0.4); font-size: 13px; }
         `;
         document.head.appendChild(style);
@@ -2552,7 +2603,7 @@
         const entries = [];
         const seen = new Set();
         document.querySelectorAll('.tx-tool-btn').forEach(btn => {
-            const label = (btn.textContent || '').trim();
+            const label = (btn.dataset.txLabel || btn.textContent || '').trim();
             if (!label || seen.has(label)) return; // منمنعش تكرار (زرار ممكن يبقى معاد ترتيبه في القائمة)
             seen.add(label);
             entries.push({ label, run: () => btn.click() });
@@ -2767,33 +2818,37 @@
         const style = document.createElement('style');
         style.id = 'tx-confirm-style';
         style.textContent = `
+
             .tx-confirm-box {
                 width: 420px; max-width: 90vw;
-                background: linear-gradient(165deg, rgba(32,32,42,0.85), rgba(14,14,19,0.92));
-                backdrop-filter: blur(26px) saturate(180%);
-                -webkit-backdrop-filter: blur(26px) saturate(180%);
-                border: 1px solid rgba(255,255,255,0.14);
-                border-radius: 20px;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(124,58,237,0.16), inset 0 1px 0 rgba(255,255,255,0.08);
-                padding: 22px 22px 18px;
-                font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
-                direction: rtl; color: #e2e8f0;
-                animation: tx-pop-in 0.2s cubic-bezier(0.2,0.8,0.2,1);
+                background: var(--tx-surface-0);
+                backdrop-filter: blur(16px) saturate(160%);
+                -webkit-backdrop-filter: blur(16px) saturate(160%);
+                border: 1px solid rgba(var(--tx-accent), 0.3);
+                border-radius: var(--tx-radius-lg);
+                box-shadow: var(--tx-shadow-pop);
+                font-family: var(--tx-font);
+                direction: rtl; color: var(--tx-text);
+                animation: tx-pop-in 0.18s var(--tx-ease);
                 position: relative;
             }
-            .tx-confirm-box::before {
-                content: '';
-                position: absolute; top: 0; left: 14%; right: 14%; height: 1px;
-                background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
-                pointer-events: none;
-            }
-            .tx-confirm-msg { font-size: 13.5px; line-height: 1.9; white-space: pre-line; margin-bottom: 20px; }
+            .tx-confirm-box:not(.tx-panel-box) { padding: 20px 20px 16px; }
+            .tx-confirm-msg { font-size: 13.5px; line-height: 1.9; white-space: pre-line; margin-bottom: 18px; }
             .tx-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
-            .tx-confirm-btn { border: none; border-radius: 10px; padding: 9px 20px; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: all 0.15s ease; color: #fff; }
-            .tx-confirm-btn.ok { background: linear-gradient(135deg, rgba(16,185,129,0.65), rgba(5,150,105,0.5)); border: 1px solid rgba(255,255,255,0.14); }
-            .tx-confirm-btn.ok:hover { filter: brightness(1.15); box-shadow: 0 0 14px rgba(16,185,129,0.35); }
-            .tx-confirm-btn.cancel { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); }
-            .tx-confirm-btn.cancel:hover { background: rgba(255,255,255,0.16); }
+            .tx-confirm-btn {
+                display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+                padding: 8px 18px; border-radius: var(--tx-radius-md); cursor: pointer;
+                background: var(--tx-surface-1); border: 1px solid var(--tx-border); color: var(--tx-text);
+                font: 700 12.5px var(--tx-font);
+                transition: background 0.15s var(--tx-ease), border-color 0.15s var(--tx-ease), box-shadow 0.15s var(--tx-ease);
+            }
+            .tx-confirm-btn:hover { background: var(--tx-surface-2); border-color: rgba(var(--tx-accent), 0.65); }
+            .tx-confirm-btn:focus-visible { outline: 2px solid rgba(var(--tx-accent), 0.85); outline-offset: 1px; }
+            .tx-confirm-btn.ok { background: rgba(var(--tx-ok), 0.13); border-color: rgba(var(--tx-ok), 0.5); color: #bbf7d0; }
+            .tx-confirm-btn.ok:hover { background: rgba(var(--tx-ok), 0.24); border-color: rgba(var(--tx-ok), 0.85); box-shadow: 0 0 10px rgba(var(--tx-ok), 0.35); }
+            .tx-confirm-btn.danger { background: rgba(var(--tx-danger), 0.14); border-color: rgba(var(--tx-danger), 0.55); color: #fecaca; }
+            .tx-confirm-btn.danger:hover { background: rgba(var(--tx-danger), 0.24); border-color: rgba(var(--tx-danger), 0.85); box-shadow: 0 0 10px rgba(var(--tx-danger), 0.35); }
+            @media (prefers-reduced-motion: reduce) { .tx-confirm-box { animation: none; } .tx-confirm-btn { transition: none; } }
         `;
         document.head.appendChild(style);
     }
@@ -2907,7 +2962,7 @@
         let fixBtn = null;
         if (extraAction && totalItems > 0) {
             fixBtn = document.createElement('button');
-            fixBtn.className = 'tx-panel-btn fix';
+            fixBtn.className = 'tx-panel-btn ' + (extraAction.tone || 'fix');
             fixBtn.textContent = extraAction.label || '🔧 تصليح تلقائي';
             actionsDiv.appendChild(fixBtn);
         }
@@ -3074,28 +3129,11 @@
         const style = document.createElement('style');
         style.id = 'tx-review-style';
         style.textContent = `
-            .tx-review-tabbar {
-                display: flex; flex-wrap: wrap; gap: 6px; padding: 6px;
-                margin: 12px 16px 0;
-                background: rgba(255,255,255,0.04);
-                border-radius: 14px;
-            }
-            .tx-review-tab {
-                background: transparent; color: #94a3b8; border: none;
-                padding: 8px 13px; border-radius: 10px; font-size: 11.5px; font-weight: 700;
-                cursor: pointer; white-space: nowrap; transition: all 0.15s ease;
-                font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
-                flex: 0 0 auto;
-            }
-            .tx-review-tab:hover { color: #e2e8f0; }
-            .tx-review-tab.active {
-                background: linear-gradient(135deg, rgba(124,58,237,0.55), rgba(20,20,26,0.65));
-                color: #fff;
-                box-shadow: inset 0 0 0 1px rgba(167,139,250,0.4), 0 0 12px rgba(124,58,237,0.3);
-            }
+
+            /* التابات نفسها (review + help) متعرّفة مرة واحدة في ensurePopupSystemStyles */
             .tx-review-tab-badge {
-                background: #ef4444; color: #fff; border-radius: 20px;
-                padding: 1px 7px; font-size: 10.5px; margin-inline-start: 4px; font-weight: 700;
+                background: rgba(var(--tx-danger), 0.85); color: #fff; border-radius: 999px;
+                padding: 0 7px; font: 800 10.5px/16px var(--tx-font); margin-inline-start: 2px; font-variant-numeric: tabular-nums;
             }
             .tx-review-tab.active .tx-review-tab-badge { animation: tx-badge-pulse 1.8s infinite; }
         `;
@@ -3467,6 +3505,7 @@
             let hasErrorLevel = false; // مسافات = 'error' زي الأصل بالظبط
             let hasWarnLevel = false;  // إنجليزي/تشكيل/قواعد كتابة = 'warn' زي الأصل بالظبط
 
+            let hasRedLevel = false; // (v29.32.4) خطأ فعلي بيلوّن الصف أحمر
             if (raw && /^\s|\s$/.test(raw)) { acc.allLeadTrail.add(serial); hasErrorLevel = true; wsDetailMap.lead.set(serial, describeWhitespaceIssues(raw).lead); }
             if (raw && acc.doubleSpaceRegex.test(raw)) { acc.allDoubleSpace.add(serial); hasErrorLevel = true; wsDetailMap.dbl.set(serial, describeWhitespaceIssues(raw).dbl); }
 
@@ -3483,6 +3522,7 @@
             if (writingIssues.length > 0) {
                 acc.allWritingResults.push({ serial, issues: writingIssues });
                 hasWarnLevel = true;
+                if (writingIssues.some(i => txMsgSeverity(i) === 'error')) hasRedLevel = true;
             }
 
             // (v29.26.11) السيجمنت اللي فيه كلام مينفعش يتعدى 13 ثانية - ايرور. التاجات (NOISE/DEAF/OOV/OVERLAP...)
@@ -3493,18 +3533,19 @@
             if (segDur !== null && segDur > MAX_SEGMENT_SECONDS) {
                 acc.allLongSegments.push({ serial, duration: segDur });
                 hasErrorLevel = true;
+                hasRedLevel = true;
             }
 
             acc.tagInfo[serial] = { serial, text: trimmed, hasAttrTag, attrTagTexts, regionId };
 
-            if (row) setRowStatus(row, hasErrorLevel ? 'error' : (hasWarnLevel ? 'warn' : null));
+            if (row) setRowStatus(row, hasRedLevel ? 'error' : ((hasErrorLevel || hasWarnLevel) ? 'warn' : null));
         }
     }
 
     async function runFullReview(btn) {
         await pickDialect();
 
-        btn.textContent = '⏳ جاري المراجعة الشاملة...';
+        txBtnBusy(btn, 'جاري المراجعة الشاملة...');
         btn.disabled = true;
 
         // كانت الأداة بتعمل 4 جولات تصفّح كاملة منفصلة (مسافات، إنجليزي/تشكيل، قواعد كتابة، تاجات) -
@@ -3626,7 +3667,7 @@
         }
         duplicateSentenceGroups.sort((a, b) => a.serials[0] - b.serials[0]);
 
-        btn.textContent = '🚀 مراجعة شاملة';
+        txBtnReset(btn);
         btn.disabled = false;
 
         cacheQATagProblems(missingAttrTags, shortDurationTags);
@@ -3751,8 +3792,8 @@
     let fullReviewBtnRef = null;
     function addFullReviewButton() {
         const btn = document.createElement('button');
-        btn.textContent = '🚀 مراجعة شاملة';
-        btn.style.cssText = 'position:fixed;bottom:120px;left:20px;z-index:99999;background:#7c3aed;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'review', 'shield', 'مراجعة شاملة', 'review');
+
         btn.onclick = () => runFullReview(btn);
         document.body.appendChild(btn);
         fullReviewBtnRef = btn;
@@ -3999,12 +4040,12 @@
     let lastCollectedCount = 0;
 
     async function copySegments(btn) {
-        btn.textContent = '⏳ جاري السحب...';
+        txBtnBusy(btn, 'جاري السحب...');
         btn.disabled = true;
 
         const result = await collectAllSegments();
 
-        btn.textContent = '📋 نسخ كل السيجمنتات';
+        txBtnReset(btn);
         btn.disabled = false;
 
         if (!result || !result.text) {
@@ -4023,7 +4064,7 @@
         }
 
         if (ok) {
-            showToast('تم نسخ ' + result.count + ' سيجمنت (بدون تاجز) - ' + method);
+            txToolFeedback(btn, 'اتنسخ ' + result.count + ' سيجمنت', 'تم نسخ ' + result.count + ' سيجمنت (بدون تاجز) - ' + method);
         } else {
             showToast('اتجمعت البيانات بس النسخ التلقائي فشل - دوس "📎 نسخ الأخير"', true);
         }
@@ -4032,27 +4073,28 @@
     let copyAllBtnRef = null;
     function addCopyButton() {
         const btn = document.createElement('button');
-        btn.textContent = '📋 نسخ كل السيجمنتات';
-        btn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:99999;background:#22c55e;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'copyAll', 'copy', 'نسخ كل السيجمنتات', 'primary');
+
         btn.onclick = () => copySegments(btn);
         document.body.appendChild(btn);
         copyAllBtnRef = btn;
     }
 
-    function copyLastCollected() {
+    function copyLastCollected(btn) {
         if (!lastCollectedText) {
             showToast('مفيش بيانات مجمّعة بعد — دوس "نسخ كل السيجمنتات" الأول', true);
             return;
         }
         const ok = fallbackCopy(lastCollectedText);
-        showToast(ok ? 'تم نسخ ' + lastCollectedCount + ' سيجمنت ✅' : 'فشل النسخ برضه — جرب تاني بسرعة', !ok);
+        if (ok) txToolFeedback(btn, 'اتنسخ ' + lastCollectedCount + ' سيجمنت', 'تم نسخ ' + lastCollectedCount + ' سيجمنت ✅');
+        else showToast('فشل النسخ برضه — جرب تاني بسرعة', true);
     }
 
     function addCopyLastButton() {
         const btn = document.createElement('button');
-        btn.textContent = '📎 نسخ الأخير';
-        btn.style.cssText = 'position:fixed;bottom:20px;right:340px;z-index:99999;background:#f59e0b;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
-        btn.onclick = copyLastCollected;
+        txInitToolBtn(btn, 'copyLast', 'clipboard', 'نسخ الأخير', 'primary');
+
+        btn.onclick = () => copyLastCollected(btn);
         document.body.appendChild(btn);
     }
 
@@ -4226,7 +4268,7 @@
     }
 
     async function auditWhitespace(btn) {
-        btn.textContent = '⏳ جاري الفحص...';
+        txBtnBusy(btn, 'جاري الفحص...');
         btn.disabled = true;
 
         const navButtons = findNavButtons();
@@ -4247,7 +4289,7 @@
             }
         }
 
-        btn.textContent = '🔍 فحص المسافات';
+        txBtnReset(btn);
         btn.disabled = false;
 
         const sections = [];
@@ -4275,8 +4317,8 @@
 
     function addWhitespaceButton() {
         const btn = document.createElement('button');
-        btn.textContent = '🔍 فحص المسافات';
-        btn.style.cssText = 'position:fixed;bottom:20px;right:180px;z-index:99999;background:#3b82f6;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'whitespace', 'search', 'فحص المسافات', 'review');
+
         btn.onclick = () => auditWhitespace(btn);
         document.body.appendChild(btn);
     }
@@ -4310,7 +4352,7 @@
     }
 
     async function auditEnglishAndTashkeel(btn) {
-        btn.textContent = '⏳ جاري الفحص...';
+        txBtnBusy(btn, 'جاري الفحص...');
         btn.disabled = true;
 
         const navButtons = findNavButtons();
@@ -4332,7 +4374,7 @@
         }
         allEnglishIssues = dedupeBySerial(allEnglishIssues);
 
-        btn.textContent = '🈯 فحص إنجليزي/تشكيل';
+        txBtnReset(btn);
         btn.disabled = false;
 
         const sections = [];
@@ -4364,8 +4406,8 @@
 
     function addEnglishTashkeelButton() {
         const btn = document.createElement('button');
-        btn.textContent = '🈯 فحص إنجليزي/تشكيل';
-        btn.style.cssText = 'position:fixed;bottom:70px;right:180px;z-index:99999;background:#eab308;color:#000;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'englishTashkeel', 'type', 'فحص إنجليزي/تشكيل', 'review');
+
         btn.onclick = () => auditEnglishAndTashkeel(btn);
         document.body.appendChild(btn);
     }
@@ -5515,9 +5557,9 @@
                 background:rgba(255,255,255,0.06); color:#e2e8f0; font-family:'Cairo','Segoe UI',Tahoma,sans-serif;
                 font-size:13.5px; font-weight:700; cursor:pointer; text-align:right; transition: all .15s ease;
             }
-            .tx-dialect-btn:hover { background:rgba(124,58,237,0.25); border-color:rgba(124,58,237,0.5); }
-            .tx-dialect-btn.selected { background:rgba(16,185,129,0.22); border-color:rgba(16,185,129,0.55); }
-            .tx-dialect-btn.keyboard-focused { outline:2px solid rgba(124,58,237,0.9); outline-offset:2px; }
+            .tx-dialect-btn:hover { background:rgba(var(--tx-accent),0.25); border-color:rgba(var(--tx-accent),0.5); }
+            .tx-dialect-btn.selected { background:rgba(var(--tx-ok),0.22); border-color:rgba(var(--tx-ok),0.55); }
+            .tx-dialect-btn.keyboard-focused { outline:2px solid rgba(var(--tx-accent),0.9); outline-offset:2px; }
             .tx-dialect-hint {
                 font-family:'Cairo','Segoe UI',Tahoma,sans-serif; font-size:12px; color:#94a3b8;
                 text-align:center; margin-top:2px;
@@ -5610,7 +5652,7 @@
     async function auditWritingRules(btn) {
         await pickDialect();
 
-        btn.textContent = '⏳ جاري الفحص...';
+        txBtnBusy(btn, 'جاري الفحص...');
         btn.disabled = true;
 
         const navButtons = findNavButtons();
@@ -5625,7 +5667,7 @@
         }
         allResults = dedupeWritingResults(allResults);
 
-        btn.textContent = '📐 فحص القواعد';
+        txBtnReset(btn);
         btn.disabled = false;
 
         const sections = allResults.map(r => ({
@@ -5644,8 +5686,8 @@
 
     function addWritingRulesButton() {
         const btn = document.createElement('button');
-        btn.textContent = '📐 فحص القواعد';
-        btn.style.cssText = 'position:fixed;bottom:65px;right:330px;z-index:99999;background:#92400e;color:#fff;border:none;padding:6px 12px;font-size:12px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'writingRules', 'edit', 'فحص القواعد', 'review');
+
         btn.onclick = () => auditWritingRules(btn);
         document.body.appendChild(btn);
     }
@@ -5746,30 +5788,53 @@
     }
 
     function showPasteModal(initialText) {
+        ensurePanelStyles();
         const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:100000;display:flex;align-items:center;justify-content:center;';
+        overlay.className = 'tx-panel-overlay';
 
         const box = document.createElement('div');
-        box.style.cssText = 'background:#1e1e1e;padding:20px;border-radius:14px;width:600px;max-width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+        box.className = 'tx-panel-box';
+        box.style.width = '640px';
 
+        const header = document.createElement('div');
+        header.className = 'tx-panel-header';
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'tx-panel-title';
+        titleDiv.textContent = '📋 لصق النص المصحح';
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'tx-panel-btn close-icon';
+        closeBtn.textContent = '✕';
+        header.appendChild(titleDiv);
+        header.appendChild(closeBtn);
+
+        const body = document.createElement('div');
+        body.className = 'tx-panel-body';
         const label = document.createElement('div');
+        label.className = 'tx-paste-label';
         label.textContent = 'الصق هنا النص المصحح من جيمناي:';
-        label.style.cssText = 'color:#fff;margin-bottom:10px;font-family:Tahoma,sans-serif;font-size:14px;';
-
         const textarea = document.createElement('textarea');
-        textarea.style.cssText = 'width:100%;height:320px;padding:10px;border-radius:8px;border:none;font-family:Tahoma,sans-serif;font-size:14px;direction:rtl;resize:vertical;box-sizing:border-box;';
+        textarea.className = 'tx-paste-ta';
+        body.appendChild(label);
+        body.appendChild(textarea);
 
-        const btnRow = document.createElement('div');
-        btnRow.style.cssText = 'margin-top:14px;display:flex;justify-content:flex-end;gap:10px;';
-
+        const footer = document.createElement('div');
+        footer.className = 'tx-panel-footer';
         const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'tx-panel-btn';
         cancelBtn.textContent = 'إلغاء';
-        cancelBtn.style.cssText = 'padding:8px 18px;border-radius:8px;border:none;background:#555;color:#fff;cursor:pointer;';
-        cancelBtn.onclick = () => document.body.removeChild(overlay);
-
         const confirmBtn = document.createElement('button');
+        confirmBtn.className = 'tx-panel-btn fix';
         confirmBtn.textContent = '🔍 مقارنة قبل اللصق';
-        confirmBtn.style.cssText = 'padding:8px 18px;border-radius:8px;border:none;background:#22c55e;color:#fff;cursor:pointer;font-weight:bold;';
+
+        function close() {
+            document.removeEventListener('keydown', escHandler, true);
+            overlay.remove();
+        }
+        function escHandler(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } }
+        document.addEventListener('keydown', escHandler, true);
+        closeBtn.onclick = close;
+        cancelBtn.onclick = close;
+
         confirmBtn.onclick = async () => {
             const text = textarea.value;
             const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
@@ -5781,18 +5846,18 @@
             confirmBtn.disabled = true;
             // قبل أي لصق فعلي، بنجمع الأماكن المتاحة (كل الصفحات) ونوريه شاشة مقارنة قبل/بعد
             const slots = await buildPasteSlots();
-            document.body.removeChild(overlay);
+            close();
             showPasteDiffPanel(lines, slots, async () => {
                 // اللصق كله بيتسجل كخطوة تراجع واحدة (Ctrl+Z هيرجع كل السيجمنتات القديمة دفعة واحدة)
                 await runBatchOperation('paste', () => pasteSegments(text));
             });
         };
 
-        btnRow.appendChild(cancelBtn);
-        btnRow.appendChild(confirmBtn);
-        box.appendChild(label);
-        box.appendChild(textarea);
-        box.appendChild(btnRow);
+        footer.appendChild(cancelBtn);
+        footer.appendChild(confirmBtn);
+        box.appendChild(header);
+        box.appendChild(body);
+        box.appendChild(footer);
         overlay.appendChild(box);
         document.body.appendChild(overlay);
         textarea.focus();
@@ -5856,19 +5921,19 @@
         const style = document.createElement('style');
         style.id = 'tx-diff-style';
         style.textContent = `
-            .tx-diff-removed { color: #fca5a5; text-decoration: line-through; background: rgba(239,68,68,0.15); border-radius: 3px; padding: 0 1px; }
-            .tx-diff-added { color: #86efac; background: rgba(34,197,94,0.15); border-radius: 3px; padding: 0 1px; }
+            .tx-diff-removed { color: #fca5a5; text-decoration: line-through; background: rgba(var(--tx-danger),0.15); border-radius: 3px; padding: 0 1px; }
+            .tx-diff-added { color: #86efac; background: rgba(var(--tx-ok),0.15); border-radius: 3px; padding: 0 1px; }
             .tx-diff-row { background: rgba(255,255,255,0.035); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
             .tx-diff-row-head { color: #94a3b8; font-size: 11px; font-weight: 700; margin-bottom: 4px; }
             .tx-diff-line { font-size: 12.5px; line-height: 1.7; direction: rtl; }
             .tx-diff-old { margin-bottom: 3px; }
             .tx-diff-mismatch-banner {
-                background: rgba(239,68,68,0.14); border: 1px solid rgba(239,68,68,0.4);
+                background: rgba(var(--tx-danger),0.14); border: 1px solid rgba(var(--tx-danger),0.4);
                 border-radius: 10px; padding: 10px 14px; color: #fca5a5; font-size: 12.5px;
                 margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
             }
             .tx-diff-jump-btn {
-                background: rgba(239,68,68,0.25); border: 1px solid rgba(239,68,68,0.5);
+                background: rgba(var(--tx-danger),0.25); border: 1px solid rgba(var(--tx-danger),0.5);
                 border-radius: 8px; color: #fff; font-size: 11.5px; font-weight: 700;
                 padding: 5px 10px; cursor: pointer; flex-shrink: 0; white-space: nowrap;
             }
@@ -5964,10 +6029,9 @@
         }
 
         const footer = document.createElement('div');
-        footer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px; padding:12px 16px; border-top:1px solid rgba(255,255,255,0.06);';
+        footer.className = 'tx-panel-footer';
         const backBtn = document.createElement('button');
         backBtn.className = 'tx-panel-btn';
-        backBtn.style.background = 'rgba(255,255,255,0.08)';
         backBtn.textContent = 'رجوع';
         backBtn.onclick = () => overlay.remove();
         const confirmBtn = document.createElement('button');
@@ -5985,10 +6049,10 @@
             // (v29.26.1) لصق رغم الاختلاف: بيلصق الأسطر بالترتيب على الأماكن المتاحة بس (أول min(أسطر، أماكن)). اللصق كله خطوة تراجع واحدة (Ctrl+Z)
             const forceBtn = document.createElement('button');
             forceBtn.className = 'tx-panel-btn';
-            forceBtn.style.background = 'rgba(245,158,11,0.25)';
+            forceBtn.classList.add('warn');
             forceBtn.textContent = '⚠️ لصق رغم الاختلاف (' + Math.min(lines.length, slots.length) + ' سطر)';
             forceBtn.onclick = async () => {
-                if (!window.confirm('الأسطر (' + lines.length + ') غير الأماكن (' + slots.length + ').\nهلصق أول ' + Math.min(lines.length, slots.length) + ' سطر بالترتيب على الأماكن المتاحة، وأي زيادة هتتساب.\nلو الفرق في النص من أوله فالنص ممكن ينزاح عن مكانه.\nتقدر ترجّع كل ده بـ Ctrl+Z. تكمّل؟')) return;
+                if (!(await showConfirmModal({ icon: '⚠️', title: 'لصق رغم الاختلاف', message: 'الأسطر (' + lines.length + ') غير الأماكن (' + slots.length + ').\nهلصق أول ' + Math.min(lines.length, slots.length) + ' سطر بالترتيب على الأماكن المتاحة، وأي زيادة هتتساب.\nلو الفرق في النص من أوله فالنص ممكن ينزاح عن مكانه.\nتقدر ترجّع كل ده بـ Ctrl+Z. تكمّل؟', confirmText: 'كمّل اللصق', cancelText: 'رجوع', danger: true }))) return;
                 forceBtn.textContent = '⏳ جاري اللصق...'; forceBtn.disabled = true; confirmBtn.disabled = true;
                 await onConfirm();
                 overlay.remove();
@@ -6006,8 +6070,8 @@
 
     function addPasteButton() {
         const btn = document.createElement('button');
-        btn.textContent = '📥 لصق النتائج';
-        btn.style.cssText = 'position:fixed;bottom:20px;left:20px;z-index:99999;background:#8b5cf6;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'paste', 'paste', 'لصق النتائج', 'primary');
+
         btn.onclick = showPasteModal;
         document.body.appendChild(btn);
     }
@@ -6415,54 +6479,54 @@
                 width: 15px; height: 15px; border-radius: 50%;
                 margin-inline-start: 6px; vertical-align: middle;
                 cursor: pointer; font-size: 9.5px; font-weight: 900; line-height: 1;
-                color: #fca5a5;
-                background: rgba(239,68,68,0.10);
-                border: 1px solid rgba(239,68,68,0.22);
-                backdrop-filter: blur(6px) saturate(160%);
-                -webkit-backdrop-filter: blur(6px) saturate(160%);
-                opacity: 0.22;
+                color: rgb(var(--tx-danger, 248,113,113));
+                background: rgba(var(--tx-danger, 248,113,113), 0.14);
+                border: 1px solid rgba(var(--tx-danger, 248,113,113), 0.4);
+                opacity: 0.65;
                 transition: opacity 0.2s ease, background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
             }
             tr:hover .tx-row-err-marker {
-                opacity: 0.9;
+                opacity: 1;
             }
             .tx-row-err-marker:hover {
                 opacity: 1 !important;
-                background: rgba(239,68,68,0.34);
-                box-shadow: 0 0 10px rgba(239,68,68,0.35);
-                transform: scale(1.18);
+                background: rgba(var(--tx-danger, 248,113,113), 0.3);
+                box-shadow: 0 0 8px rgba(var(--tx-danger, 248,113,113), 0.3);
+                transform: scale(1.15);
             }
             .tx-row-err-tooltip {
                 position: fixed; z-index: 100001;
                 max-width: 300px;
-                background: linear-gradient(165deg, rgba(32,32,42,0.88), rgba(14,14,19,0.94));
-                backdrop-filter: blur(22px) saturate(180%);
-                -webkit-backdrop-filter: blur(22px) saturate(180%);
-                border: 1px solid rgba(255,255,255,0.14);
-                border-radius: 14px; padding: 10px 12px;
-                color: #e2e8f0; font-size: 12px; line-height: 1.6;
-                direction: rtl; font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
-                box-shadow: 0 14px 34px rgba(0,0,0,0.5), 0 0 20px rgba(239,68,68,0.16);
+                background: #0c111b;
+                border: 1px solid rgba(var(--tx-accent, 45,212,191), 0.3);
+                border-radius: var(--tx-radius-lg, 14px); padding: 10px 12px;
+                color: var(--tx-text, #e2e8f0); font-size: 12px; line-height: 1.6;
+                direction: rtl; font-family: var(--tx-font, 'Cairo', 'Segoe UI', Tahoma, sans-serif);
+                box-shadow: 0 12px 32px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.03);
                 animation: tx-pop-in 0.16s ease;
                 cursor: pointer;
                 opacity: 1;
                 transition: opacity 0.6s ease, transform 0.6s ease;
             }
             .tx-row-err-tooltip.tx-fade-out { opacity: 0; transform: translateY(6px); }
-            .tx-row-err-tooltip .tx-errnav-tooltip-title { color: #fbbf24; font-weight: 700; margin-bottom: 6px; }
-            .tx-row-err-tooltip .tx-errnav-tooltip-item { margin-bottom: 4px; padding-right: 8px; border-right: 2px solid rgba(239,68,68,0.4); }
+            .tx-row-err-tooltip .tx-errnav-tooltip-title { color: rgb(var(--tx-danger, 248,113,113)); font-weight: 800; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+            .tx-row-err-tooltip .tx-errnav-tooltip-item { margin-bottom: 4px; padding-right: 8px; border-right: 3px solid rgba(var(--tx-danger, 248,113,113), 0.55); }
             .tx-row-err-tooltip .tx-errnav-tooltip-item:last-child { margin-bottom: 0; }
         `;
         document.head.appendChild(style);
     }
 
     let rowErrTooltipTimer = null;
+    let rowErrTooltipCleanup = null;
+    // (v29.32.5) التولتيب بيفضل ظاهر طول ما الماوس على العلامة أو عليه (من غير fade عشان تلحق تقرأ)، ولو الماوس
+    // سابهم بيختفي بعد 2.5 ثانية، والضغط في أي مكان بيخفيه بنفس الـfade الناعم.
     function showRowErrorTooltip(markerEl, serial) {
         ensureRowErrorMarkerStyles();
+        if (rowErrTooltipCleanup) rowErrTooltipCleanup();
         const existing = document.getElementById('tx-row-err-tooltip');
         if (existing) existing.remove();
 
-        const messages = (lastReviewProblemMessages.get(serial) || ['فيه مشكلة في السيجمنت ده، افتح "🚀 مراجعة شاملة" للتفاصيل']).slice(0, 6);
+        const messages = (lastReviewProblemMessages.get(serial) || ['فيه مشكلة في السيجمنت ده، افتح \"🚀 مراجعة شاملة\" للتفاصيل']).slice(0, 6);
         const rect = markerEl.getBoundingClientRect();
 
         const box = document.createElement('div');
@@ -6482,12 +6546,32 @@
         box.style.top = top + 'px';
         box.style.left = left + 'px';
 
-        if (rowErrTooltipTimer) clearTimeout(rowErrTooltipTimer);
-        rowErrTooltipTimer = setTimeout(() => {
+        const stopTimer = () => { if (rowErrTooltipTimer) { clearTimeout(rowErrTooltipTimer); rowErrTooltipTimer = null; } };
+        const startTimer = () => { stopTimer(); rowErrTooltipTimer = setTimeout(dismiss, 2500); };
+        // الضغط على العلامة نفسها بيتعامل معاه الـhandler بتاعها (بيستبدل التولتيب)، أي ضغطة تانية بتخفيه
+        const onDocClick = (e) => { if (e.target && e.target.closest && e.target.closest('.tx-row-err-marker')) return; dismiss(); };
+        const cleanup = () => {
+            stopTimer();
+            document.removeEventListener('click', onDocClick, true);
+            markerEl.removeEventListener('mouseenter', stopTimer);
+            markerEl.removeEventListener('mouseleave', startTimer);
+            if (rowErrTooltipCleanup === cleanup) rowErrTooltipCleanup = null;
+        };
+        function dismiss() {
+            if (box.dataset.dismissing) return;
+            box.dataset.dismissing = '1';
+            cleanup();
             box.classList.add('tx-fade-out');
             setTimeout(() => box.remove(), 650);
-        }, 2000);
-        box.addEventListener('click', () => box.remove());
+        }
+        rowErrTooltipCleanup = cleanup;
+
+        box.addEventListener('mouseenter', stopTimer);
+        box.addEventListener('mouseleave', startTimer);
+        markerEl.addEventListener('mouseenter', stopTimer);
+        markerEl.addEventListener('mouseleave', startTimer);
+        document.addEventListener('click', onDocClick, true);
+        if (!markerEl.matches(':hover')) startTimer();
     }
 
     function getOrCreateRowErrorMarker(row) {
@@ -6530,7 +6614,7 @@
     }
 
     async function checkTagConsistency(btn) {
-        btn.textContent = '⏳ جاري الفحص...';
+        txBtnBusy(btn, 'جاري الفحص...');
         btn.disabled = true;
 
         const allInfo = await collectAllRowInfo({ fast: true });
@@ -6577,7 +6661,7 @@
             }
         }
 
-        btn.textContent = '⚠️ فحص التاجات';
+        txBtnReset(btn);
         btn.disabled = false;
 
         cacheQATagProblems(missingAttrTags, shortDurationTags);
@@ -6634,8 +6718,8 @@
     let tagCheckBtnRef = null;
     function addTagCheckButton() {
         const btn = document.createElement('button');
-        btn.textContent = '⚠️ فحص التاجات';
-        btn.style.cssText = 'position:fixed;bottom:20px;left:200px;z-index:99999;background:#dc2626;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'tagCheck', 'tag', 'فحص التاجات', 'review');
+
         btn.onclick = () => checkTagConsistency(btn);
         document.body.appendChild(btn);
         tagCheckBtnRef = btn;
@@ -6665,14 +6749,14 @@
             title: 'تفريغ كل السيجمنتات؟',
             message:
                 'هتمسح كل نص وكل تاج في كل سيجمنتات التاسك الحالي دفعة واحدة.\n\n' +
-                'النص هيرجع بضغطة Ctrl+Z واحدة لو غيّرت رأيك - لكن كل تاج هيحتاج ضغطة Ctrl+Z منفصلة ليه (مش كلهم مرة واحدة).',
+                'لو غيّرت رأيك: هيظهر لك زرار \"تراجع\" لمدة 6 ثواني بعد التفريغ يرجّع النص والتاجات كلهم مرة واحدة.',
             confirmText: 'تفريغ الكل',
             cancelText: 'إلغاء',
             danger: true
         });
         if (!confirmed) return;
 
-        if (btn) { btn.textContent = '⏳ جاري التفريغ...'; btn.disabled = true; }
+        if (btn) { txBtnBusy(btn, 'جاري التفريغ...'); btn.disabled = true; }
 
         let clearedTextCount = 0;
         let clearedTagCount = 0;
@@ -6690,6 +6774,7 @@
         // المنطق المضمون اللي شغال في collectAllRowInfo بالظبط، وده بيكون مناعة كاملة ضد تغيّر ارتفاع
         // الصفوف مهما كان.
         const visitedSerials = new Set();
+        const undoTopBefore = undoStack.length ? undoStack[undoStack.length - 1] : null; // (v29.31.0) عشان زرار "تراجع" بعد التفريغ يعرف يرجّع خطواتنا إحنا بس
 
         let failedRowCount = 0;
 
@@ -6794,16 +6879,35 @@
             runForcedLiveRescan(); // فحص واحد بس للصفوف الظاهرة بعد ما العملية تخلص
         }
 
-        if (btn) { btn.textContent = '🧹 تفريغ كل السيجمنتات'; btn.disabled = false; }
-        showToast('تم تفريغ ' + clearedTextCount + ' نص و' + clearedTagCount + ' تاج ✅ (اتفحص ' + visitedSerials.size + ' سيجمنت' + (navPagesFound > 0 ? ' في ' + navPagesFound + ' صفحة' : '') + (failedRowCount > 0 ? '، وتخطّيت ' + failedRowCount + ' صف فشل' : '') + ')', failedRowCount > 0);
+        if (btn) { txBtnReset(btn); btn.disabled = false; }
+        const clearedMsg = 'تم تفريغ ' + clearedTextCount + ' نص و' + clearedTagCount + ' تاج ✅ (اتفحص ' + visitedSerials.size + ' سيجمنت' + (navPagesFound > 0 ? ' في ' + navPagesFound + ' صفحة' : '') + (failedRowCount > 0 ? '، وتخطّيت ' + failedRowCount + ' صف فشل' : '') + ')';
+
+        // (v29.31.0) توست "تراجع" 6 ثواني (نفس توست مركز التاسكات): بيرجّع كل خطوات التفريغ (النص دفعة واحدة + كل تاج) بضغطة واحدة.
+        // لو اتعمل أي تعديل بعد التفريغ قبل ما تدوس، بيرفض عشان ميلخبطش تعديلاتك الجديدة (وتقدر تستخدم زرار تراجع العادي).
+        const topIdx = undoTopBefore ? undoStack.indexOf(undoTopBefore) : -1;
+        const addedSteps = undoStack.length - (topIdx + 1);
+        const canUndoToast = (clearedTextCount + clearedTagCount) > 0 && addedSteps > 0 && !(undoTopBefore && topIdx === -1);
+        if (canUndoToast) {
+            const guardTop = undoStack[undoStack.length - 1];
+            tcUndoToast(clearedMsg, async () => {
+                if (undoStack[undoStack.length - 1] !== guardTop) {
+                    showToast('اتعمل تعديل بعد التفريغ - استخدم زرار \"تراجع\" العادي (خطوة خطوة)', true);
+                    return;
+                }
+                for (let i = 0; i < addedSteps && undoStack.length > 0; i++) await undoLastEdit();
+                showToast('رجّعت التفريغ كله ↩️ (' + addedSteps + ' خطوة)');
+            });
+            if (failedRowCount > 0) showToast('تخطّيت ' + failedRowCount + ' صف فشل في التفريغ', true);
+        } else {
+            showToast(clearedMsg, failedRowCount > 0);
+        }
     }
 
     let clearAllSegmentsBtnRef = null;
     function addClearAllSegmentsButton() {
         const btn = document.createElement('button');
-        btn.textContent = '🧹 تفريغ كل السيجمنتات';
+        txInitToolBtn(btn, 'clearAll', 'trash', 'تفريغ كل السيجمنتات', 'danger');
         btn.title = 'يمسح كل النص وكل التاجات في كل سيجمنتات التاسك الحالي - اختصار: Insert';
-        btn.style.cssText = 'position:fixed;bottom:20px;left:280px;z-index:99999;background:#dc2626;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
         btn.onclick = () => clearAllSegmentsContent(btn);
         document.body.appendChild(btn);
         clearAllSegmentsBtnRef = btn;
@@ -6822,8 +6926,8 @@
     let redoBtnRef = null;
 
     function updateUndoRedoButtons() {
-        if (undoBtnRef) undoBtnRef.disabled = undoStack.length === 0;
-        if (redoBtnRef) redoBtnRef.disabled = redoStack.length === 0;
+        if (undoBtnRef) { undoBtnRef.disabled = undoStack.length === 0; txBtnCount(undoBtnRef, undoStack.length); }
+        if (redoBtnRef) { redoBtnRef.disabled = redoStack.length === 0; txBtnCount(redoBtnRef, redoStack.length); }
     }
 
     // بيلف حوالين أي عملية بتعدل أكتر من سيجمنت مرة واحدة (لصق، تصليح تلقائي...) وبيجمعهم في خطوة تراجع واحدة
@@ -7025,9 +7129,8 @@
 
     function addUndoButton() {
         const btn = document.createElement('button');
-        btn.textContent = '↩️ تراجع';
+        txInitToolBtn(btn, 'undo', 'undo', 'تراجع', '');
         btn.disabled = true;
-        btn.style.cssText = 'position:fixed;bottom:120px;right:20px;z-index:99999;background:#475569;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
         btn.onclick = () => undoLastEdit();
         document.body.appendChild(btn);
         undoBtnRef = btn;
@@ -7035,9 +7138,8 @@
 
     function addRedoButton() {
         const btn = document.createElement('button');
-        btn.textContent = '↪️ إعادة';
+        txInitToolBtn(btn, 'redo', 'redo', 'إعادة', '');
         btn.disabled = true;
-        btn.style.cssText = 'position:fixed;bottom:120px;right:200px;z-index:99999;background:#475569;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
         btn.onclick = () => redoLastEdit();
         document.body.appendChild(btn);
         redoBtnRef = btn;
@@ -7170,15 +7272,19 @@
         const style = document.createElement('style');
         style.id = 'tx-row-focus-highlight-style';
         style.textContent = `
-            #changyuliu_table tr.tx-row-focused:not(.tx-row-error):not(.tx-row-warn):not(.tx-row-ok) {
-                background: rgba(167,139,250,0.07) !important;
-                outline: 1.5px solid rgba(167,139,250,0.55) !important;
+            #changyuliu_table tr.tx-row-focused:not(.tx-row-error):not(.tx-row-ok) {
+                background: rgba(var(--tx-accent, 45,212,191), 0.07) !important;
+                outline: 1.5px solid rgba(var(--tx-accent, 45,212,191), 0.55) !important;
                 outline-offset: -1.5px;
             }
+            /* الصف اللي عليه حالة: التركيز بإطار تركواز فوق خلفية الحالة */
             #changyuliu_table tr.tx-row-focused.tx-row-error,
-            #changyuliu_table tr.tx-row-focused.tx-row-warn,
             #changyuliu_table tr.tx-row-focused.tx-row-ok {
-                outline-width: 2.5px !important;
+                outline: 1.5px solid rgba(var(--tx-accent, 45,212,191), 0.7) !important;
+                outline-offset: -1.5px;
+            }
+            #changyuliu_table ::selection, #changyuliu_table *::selection {
+                background: rgba(var(--tx-accent, 45,212,191), 0.3); color: #f0fdfa;
             }
             #changyuliu_table tr.tx-row-focused {
                 transition: background 0.15s ease, outline-color 0.15s ease, outline-width 0.15s ease;
@@ -7356,6 +7462,23 @@
             url: location.href,
             data: backupData
         }));
+        txRefreshRestoreDot(); // (v29.31.0)
+    }
+
+    // (v29.31.0) نقطة على زرار "استرجاع الشغل" لو فيه مسودة محفوظة للتاسك المفتوح دلوقتي
+    let restoreBtnRef = null;
+    function txRefreshRestoreDot() {
+        if (!restoreBtnRef) return;
+        let on = false, title = '';
+        try {
+            const b = loadExistingBackup();
+            if (b && b.data && Object.keys(b.data).length > 0 && (!b.url || b.url === location.href)) {
+                on = true;
+                const mins = Math.max(0, Math.round((Date.now() - b.timestamp) / 60000));
+                title = 'فيه مسودة محفوظة: ' + Object.keys(b.data).length + ' سيجمنت (عمرها حوالي ' + mins + ' دقيقة)';
+            }
+        } catch (e) { on = false; }
+        txBtnDot(restoreBtnRef, on, title);
     }
 
     function loadExistingBackup() {
@@ -7412,10 +7535,12 @@
 
     function addRestoreBackupButton() {
         const btn = document.createElement('button');
-        btn.textContent = '🩹 استرجاع الشغل';
-        btn.style.cssText = 'position:fixed;bottom:165px;left:20px;z-index:99999;background:#334155;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'restore', 'history', 'استرجاع الشغل', 'warn');
+
         btn.onclick = () => restoreFromBackup();
         document.body.appendChild(btn);
+        restoreBtnRef = btn;
+        txRefreshRestoreDot();
     }
 
     // ==================== الجزء 9.5: إحصائية الإنتاجية اليومية - محسوبة لكل تاسك عند إنهاءه بس (v13.0) ====================
@@ -7466,7 +7591,7 @@
     // بيتقرا لما تدوس "✅ إنهاء التاسك": بيمسح التاسك الحالي كله (بكل صفحاته) مرة واحدة، ويحسب
     // إجمالي عدد السيجمنتات المتفرّغة + زمن الكلام + زمن التاجات الحقيقي، ويضيفهم على إحصائية اليوم مرة واحدة بس.
     async function finishCurrentTask(btn) {
-        btn.textContent = '⏳ جاري احتساب التاسك...';
+        txBtnBusy(btn, 'جاري احتساب التاسك...');
         btn.disabled = true;
 
         if (breakState) endBreak('manual'); // (v29.0) دوست إنهاء التاسك = رجعت للشغل
@@ -7506,7 +7631,7 @@
             { okLabel: 'تأكيد', cancelLabel: 'إلغاء' }
         );
         if (!confirmed) {
-            btn.textContent = '✅ إنهاء التاسك';
+            txBtnReset(btn);
             btn.disabled = false;
             return;
         }
@@ -7539,7 +7664,7 @@
             goal: goalInfo
         });
 
-        btn.textContent = '✅ إنهاء التاسك';
+        txBtnReset(btn);
         btn.disabled = false;
 
         maybeSuggestBreakAfterTask(data.tasksFinished); // (v29.0) كل 4 تاسكات: اقتراح بريك
@@ -7549,8 +7674,8 @@
     let finishTaskBtnRef = null;
     function addFinishTaskButton() {
         const btn = document.createElement('button');
-        btn.textContent = '✅ إنهاء التاسك';
-        btn.style.cssText = 'position:fixed;bottom:165px;left:770px;z-index:99999;background:#15803d;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'finish', 'checkCircle', 'إنهاء التاسك', 'ok');
+
         btn.onclick = () => finishCurrentTask(btn);
         document.body.appendChild(btn);
         finishTaskBtnRef = btn;
@@ -7574,6 +7699,7 @@
 
         showResultsPanel('📊 إحصائية إنتاجية اليوم (' + data.date + ')', sections, 'لسه مفيش أي تاسكات اتسجّلت النهاردة', {
             label: '🔄 تصفير الأرقام',
+            tone: 'danger',
             loadingLabel: '⏳ جاري التصفير...',
             confirmMessage: 'هيتصفّر كل رقم في إحصائية النهاردة (عدد التاسكات، السيجمنتات، زمن الكلام والتاجات) وتبدأ من الصفر. الإجراء ده مش قابل للتراجع. متأكد؟',
             onClick: async () => { resetDailyStats(); return 0; },
@@ -7583,8 +7709,8 @@
 
     function addDailyStatsButton() {
         const btn = document.createElement('button');
-        btn.textContent = '📊 إحصائية اليوم';
-        btn.style.cssText = 'position:fixed;bottom:165px;left:200px;z-index:99999;background:#0e7490;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'statsDay', 'barChart', 'إحصائية اليوم', 'info');
+
         btn.onclick = () => showDailyStatsPanel();
         document.body.appendChild(btn);
     }
@@ -7739,8 +7865,8 @@
 
     function addAllTimeStatsButton() {
         const btn = document.createElement('button');
-        btn.textContent = '📈 إحصائية شاملة';
-        btn.style.cssText = 'position:fixed;bottom:165px;left:1300px;z-index:99999;background:#1d4ed8;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'statsAll', 'trendUp', 'إحصائية شاملة', 'info');
+
         btn.onclick = () => showAllTimeStatsPanel();
         document.body.appendChild(btn);
     }
@@ -7796,8 +7922,8 @@
 
     function addCachedReviewButton() {
         const btn = document.createElement('button');
-        btn.textContent = '📂 آخر مراجعة';
-        btn.style.cssText = 'position:fixed;bottom:165px;left:380px;z-index:99999;background:#6d28d9;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'lastReview', 'fileText', 'آخر مراجعة', 'review');
+
         btn.onclick = () => showCachedReview();
         document.body.appendChild(btn);
     }
@@ -8039,7 +8165,7 @@
             return;
         }
 
-        btn.textContent = '⏳ جاري تحليل الفروقات...';
+        txBtnBusy(btn, 'جاري تحليل الفروقات...');
         btn.disabled = true;
 
         const currentInfo = await collectAllRowInfo();
@@ -8107,7 +8233,7 @@
 
         segmentReports.sort((a, b) => a.serial - b.serial);
 
-        btn.textContent = '🧪 فحص QA';
+        txBtnReset(btn);
         btn.disabled = false;
 
         if (segmentReports.length === 0) {
@@ -8313,8 +8439,8 @@
 
     function addQAReportButton() {
         const btn = document.createElement('button');
-        btn.textContent = '🧪 فحص QA';
-        btn.style.cssText = 'position:fixed;bottom:165px;left:940px;z-index:99999;background:#be185d;color:#fff;border:none;padding:10px 16px;font-size:14px;font-weight:bold;cursor:pointer;';
+        txInitToolBtn(btn, 'qa', 'checkSquare', 'فحص QA', 'review');
+
         btn.onclick = () => generateQAReport(btn);
         document.body.appendChild(btn);
     }
@@ -8669,51 +8795,17 @@
         if (document.getElementById('tx-tool-style')) return;
         const style = document.createElement('style');
         style.id = 'tx-tool-style';
+        // (v29.31.0) الشكل بقى من نظام التصميم الموحّد (tx-ds-btn + الـtone)، فمفيش هنا أي تلوين/ظل/بلور خاص بالأزرار.
         style.textContent = `
-            .tx-tool-btn {
-                border-radius: 12px !important;
-                padding: 8px 12px !important;
-                font-size: 11.5px !important;
-                font-weight: 700 !important;
-                letter-spacing: 0.2px;
-                border: 1px solid rgba(255,255,255,0.16) !important;
-                box-shadow: 0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.2) !important;
-                backdrop-filter: blur(8px) saturate(160%) !important;
-                -webkit-backdrop-filter: blur(8px) saturate(160%) !important;
-                transition: box-shadow 0.18s ease, filter 0.18s ease, border-color 0.18s ease !important;
-                font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif !important;
-            }
-            .tx-tool-btn:hover {
-                filter: brightness(1.18) saturate(1.15);
-                border-color: rgba(255,255,255,0.4) !important;
-                box-shadow: 0 4px 14px rgba(0,0,0,0.4), 0 0 0 3px rgba(255,255,255,0.07), inset 0 1px 0 rgba(255,255,255,0.3) !important;
-                opacity: 1 !important;
-            }
-            .tx-tool-btn:active { filter: brightness(0.9); }
-            .tx-tool-btn:disabled { opacity: 0.4 !important; cursor: not-allowed !important; filter: none !important; }
+            .tx-tool-btn:disabled { cursor: not-allowed !important; }
         `;
         document.head.appendChild(style);
     }
 
     function softenAllButtons() {
         injectModernButtonStyle();
-        const softPalette = [
-            'rgba(63,107,82,0.6)', 'rgba(74,90,120,0.6)', 'rgba(122,90,63,0.6)', 'rgba(90,74,120,0.6)',
-            'rgba(63,107,107,0.6)', 'rgba(122,74,74,0.6)', 'rgba(74,107,74,0.6)', 'rgba(107,74,107,0.6)',
-            'rgba(146,64,14,0.6)', 'rgba(6,95,70,0.6)', 'rgba(124,58,237,0.6)', 'rgba(21,128,61,0.6)'
-        ];
-        let colorIndex = 0;
-
-        document.querySelectorAll('button').forEach(btn => {
-            const txt = btn.textContent.trim();
-            const isOurButton = /^[📋📎🔍📥⚠️🈯📐🚀↩️↪️🩹📊📂📈🧾✅🧪📤🔁🧹🎯📦]/u.test(txt);
-            if (!isOurButton) return;
-
-            btn.classList.add('tx-tool-btn');
-            btn.style.opacity = '1';
-            btn.style.background = softPalette[colorIndex % softPalette.length];
-            colorIndex++;
-        });
+        // (v29.31.0) الأزرار بتتعرّف من data-tx-tool (اتحطت وقت الإنشاء) بدل التخمين بأول إيموجي في النص، ومفيش ألوان عشوائية.
+        document.querySelectorAll('button[data-tx-tool="1"]').forEach(btn => btn.classList.add('tx-tool-btn'));
     }
 
     // ==================== القائمة العائمة الذكية - Dynamic Island Style (v10.0) ====================
@@ -8744,7 +8836,7 @@
                 content: '';
                 position: absolute; inset: -6px;
                 border-radius: 50px;
-                background: radial-gradient(circle, rgba(124,58,237,0.55), rgba(56,189,248,0.25) 60%, transparent 75%);
+                background: radial-gradient(circle, rgba(var(--tx-accent),0.5), rgba(var(--tx-info),0.22) 60%, transparent 75%);
                 filter: blur(10px);
                 z-index: -1;
                 animation: tx-mascot-glow-pulse 2.6s ease-in-out infinite;
@@ -8754,8 +8846,8 @@
             .tx-mascot-btn {
                 display: flex; align-items: center; gap: 9px;
                 background:
-                    linear-gradient(rgba(14,14,18,0.88), rgba(14,14,18,0.88)) padding-box,
-                    linear-gradient(120deg, #7c3aed, #38bdf8, #7c3aed) border-box;
+                    linear-gradient(rgba(10,14,18,0.9), rgba(10,14,18,0.9)) padding-box,
+                    linear-gradient(120deg, rgb(var(--tx-accent)), rgb(var(--tx-info)), rgb(var(--tx-accent))) border-box;
                 background-size: 100% 100%, 200% 100%;
                 animation: tx-mascot-border-shimmer 5s linear infinite;
                 backdrop-filter: blur(20px) saturate(180%);
@@ -8763,22 +8855,17 @@
                 color: #e5e7eb; border: 1.5px solid transparent; border-radius: 50px;
                 padding: 9px 18px 9px 14px; cursor: pointer;
                 box-shadow: 0 10px 28px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
-                transition: transform 0.25s cubic-bezier(0.2,0.8,0.2,1), box-shadow 0.25s cubic-bezier(0.2,0.8,0.2,1);
+                transition: transform 0.25s cubic-bezier(0.2,0.8,0.2,1), box-shadow 0.25s cubic-bezier(0.2,0.8,0.2,1), padding 0.5s cubic-bezier(0.22,1,0.36,1), gap 0.5s cubic-bezier(0.22,1,0.36,1);
                 font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; font-weight: 700; font-size: 13px;
                 pointer-events: auto;
             }
             .tx-mascot-btn:hover {
                 transform: scale(1.05);
-                box-shadow: 0 14px 36px rgba(0,0,0,0.55), 0 0 0 5px rgba(124,58,237,0.16), inset 0 1px 0 rgba(255,255,255,0.12);
+                box-shadow: 0 14px 36px rgba(0,0,0,0.55), 0 0 0 5px rgba(var(--tx-accent),0.16), inset 0 1px 0 rgba(255,255,255,0.12);
             }
-            .tx-mascot-btn.open {
-                background:
-                    linear-gradient(rgba(32,14,14,0.9), rgba(32,14,14,0.9)) padding-box,
-                    linear-gradient(120deg, #dc2626, #f97316, #dc2626) border-box;
-                background-size: 100% 100%, 200% 100%;
-                box-shadow: 0 10px 30px rgba(220,38,38,0.36), inset 0 1px 0 rgba(255,255,255,0.08);
-                transform: scale(1.03);
-            }
+            .tx-mascot-btn:focus-visible { outline: 2px solid rgba(var(--tx-accent),0.85); outline-offset: 3px; }
+            /* (v29.31.0) وهو مفتوح: الزرار بيتضمّ لعينين + دايرة ✕ صغيرة بدل شريط "Close Menu" العريض */
+            .tx-mascot-btn.open { padding: 8px 9px 8px 12px; gap: 8px; transform: scale(1.02); }
 
             .tx-mascot-face, .tx-mascot-eye, .tx-mascot-pupil {
                 forced-color-adjust: none !important;
@@ -8802,7 +8889,7 @@
             .tx-mascot-eye.blink { transform: scaleY(0.1); }
             .tx-mascot-pupil {
                 width: 8px; height: 8px;
-                background: radial-gradient(circle at 35% 35%, #5b21b6, #0f0a1f) !important;
+                background: radial-gradient(circle at 35% 35%, #0f766e, #04201e) !important;
                 border-radius: 50%;
                 position: absolute; top: 50%; left: 50%;
                 transform: translate(-50%, -50%);
@@ -8816,64 +8903,67 @@
                 background: rgba(255,255,255,0.9);
                 border-radius: 50%;
             }
-            .tx-mascot-label { white-space: nowrap; color: #e5e7eb; }
-
-            #tx-buttons-wrapper {
-                position: relative;
-                scrollbar-width: thin;
-                scrollbar-color: rgba(167,139,250,0.4) transparent;
+            .tx-mascot-label { white-space: nowrap; color: #e5e7eb; display: flex; align-items: center; }
+            /* (v29.31.1) تحوّل ناعم: النص بيتلف ويتخبّى (عرض + شفافية) والدايرة ✕ بتكبر وتلف مكانه، والزرار كله بيضيق بسلاسة */
+            .tx-mascot-text {
+                display: block; overflow: hidden; white-space: nowrap; max-width: 190px; opacity: 1;
+                transform: translateX(0); transform-origin: right center;
+                transition: max-width 0.5s cubic-bezier(0.22,1,0.36,1), opacity 0.22s ease, transform 0.5s cubic-bezier(0.22,1,0.36,1);
             }
-            #tx-buttons-wrapper::-webkit-scrollbar { width: 5px; }
-            #tx-buttons-wrapper::-webkit-scrollbar-track { background: transparent; }
-            #tx-buttons-wrapper::-webkit-scrollbar-thumb { background: rgba(167,139,250,0.35); border-radius: 10px; }
-            #tx-buttons-wrapper::-webkit-scrollbar-thumb:hover { background: rgba(167,139,250,0.55); }
+            .tx-mascot-btn.open .tx-mascot-text { max-width: 0 !important; opacity: 0; transform: translateX(10px); }
+            .tx-mascot-x {
+                display: grid; place-items: center; flex-shrink: 0; overflow: hidden;
+                width: 0; height: 22px; border-radius: 50%; opacity: 0; transform: scale(0.3) rotate(-120deg);
+                background: rgba(var(--tx-danger), 0.16); box-shadow: inset 0 0 0 1px rgba(var(--tx-danger), 0.55); color: #fecaca;
+                transition: width 0.5s cubic-bezier(0.22,1,0.36,1), opacity 0.25s ease, transform 0.55s cubic-bezier(0.34,1.56,0.64,1), background 0.15s var(--tx-ease), box-shadow 0.15s var(--tx-ease);
+            }
+            .tx-mascot-btn.open .tx-mascot-x { width: 22px; opacity: 1; transform: none; transition-delay: 0.05s, 0.1s, 0.1s, 0s, 0s; }
+            .tx-mascot-x .tx-ds-icon { width: 12px; height: 12px; flex-shrink: 0; }
+            .tx-mascot-btn:hover .tx-mascot-x { background: rgba(var(--tx-danger), 0.3); box-shadow: inset 0 0 0 1px rgba(var(--tx-danger), 0.9); }
+
+            /* ===== اللوحة: نفس شكل قايمة Quick Tools (v29.31.0) ===== */
+            #tx-buttons-wrapper.tx-mn-panel {
+                display: flex; flex-direction: column; gap: 5px;
+                width: 252px; max-height: calc(100vh - 110px); overflow-y: auto; overscroll-behavior: contain;
+                direction: rtl; box-sizing: border-box; padding: 8px;
+                background: var(--tx-surface-0);
+                border: 1px solid rgba(var(--tx-accent), 0.3);
+                border-radius: var(--tx-radius-lg);
+                backdrop-filter: blur(14px) saturate(160%);
+                -webkit-backdrop-filter: blur(14px) saturate(160%);
+                box-shadow: var(--tx-shadow-pop);
+                font-family: var(--tx-font); color: var(--tx-text);
+                opacity: 0; visibility: hidden; pointer-events: none;
+                transform: translateY(18px) scale(0.94); transform-origin: bottom right;
+                transition: opacity 0.24s ease 0.04s, transform 0.3s cubic-bezier(0.4,0,0.6,1), visibility 0s linear 0.3s;
+                scrollbar-width: thin; scrollbar-color: rgba(148,163,184,0.35) transparent;
+            }
+            #tx-buttons-wrapper.tx-mn-panel.is-open {
+                opacity: 1; visibility: visible; pointer-events: auto; transform: none;
+                transition: opacity 0.28s ease, transform 0.5s cubic-bezier(0.22,1,0.36,1), visibility 0s;
+            }
+            /* كل مجموعة بتظهر ورا اللي قبلها بتأخير بسيط (ستاجر) وبتختفي بسرعة وقت القفل */
+            .tx-mn-group { display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; opacity: 0; transform: translateY(12px); transition: opacity 0.18s ease, transform 0.22s ease; }
+            .tx-mn-panel.is-open .tx-mn-group {
+                opacity: 1; transform: none;
+                transition: opacity 0.32s ease calc(var(--i, 0) * 55ms + 80ms), transform 0.5s cubic-bezier(0.22,1,0.36,1) calc(var(--i, 0) * 55ms + 80ms);
+            }
             #tx-buttons-wrapper:focus, #tx-buttons-wrapper:focus-visible { outline: none !important; box-shadow: none !important; }
-            #tx-buttons-wrapper::before {
-                content: '';
-                position: absolute; top: 0; left: 12%; right: 12%; height: 1px;
-                background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
-                pointer-events: none;
+            .tx-mn-panel .tx-ds-group-title { flex-shrink: 0; }
+            .tx-mn-group > .tx-ds-btn, .tx-mn-grid > .tx-ds-btn {
+                flex: 0 0 auto; width: 100%; box-sizing: border-box;
+                justify-content: flex-start; gap: 9px; padding: 7px 9px; font-size: 12px;
             }
+            .tx-mn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; flex-shrink: 0; }
+            .tx-mn-grid > .tx-ds-btn { gap: 6px; padding: 7px 7px; min-width: 0; }
+            .tx-mn-group > .tx-ds-btn.is-danger { margin-top: 1px; }
 
-            .tx-sparkle {
-                position: absolute;
-                pointer-events: none;
-                font-size: 11px;
-                color: rgba(255,255,255,0.95);
-                text-shadow: 0 0 6px rgba(196,181,253,0.95), 0 0 12px rgba(124,58,237,0.6);
-                transform: translate(-50%, -50%) scale(0.3);
-                animation: tx-sparkle-pop 0.75s ease-out forwards;
-                z-index: 5;
-            }
-            @keyframes tx-sparkle-pop {
-                0% { opacity: 0; transform: translate(-50%, -50%) scale(0.2) rotate(0deg); }
-                25% { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(40deg); }
-                100% { opacity: 0; transform: translate(-50%, -50%) scale(0.4) translateY(-16px) rotate(90deg); }
+            @media (prefers-reduced-motion: reduce) {
+                #tx-floating-menu > .tx-mascot-btn-wrap, .tx-mascot-btn-wrap::before, .tx-mascot-btn { animation: none; }
+                #tx-buttons-wrapper.tx-mn-panel, .tx-mn-group, .tx-mn-panel.is-open .tx-mn-group, .tx-mascot-btn, .tx-mascot-x, .tx-mascot-text { transition: none; }
             }
         `;
         document.head.appendChild(style);
-    }
-
-    function attachSparkleTrail(container) {
-        let lastSpawn = 0;
-        const stars = ['✦', '✧', '✨'];
-        container.addEventListener('mousemove', (e) => {
-            const now = Date.now();
-            if (now - lastSpawn < 90) return;
-            lastSpawn = now;
-
-            const rect = container.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top + container.scrollTop;
-
-            const star = document.createElement('span');
-            star.className = 'tx-sparkle';
-            star.textContent = stars[Math.floor(Math.random() * stars.length)];
-            star.style.left = x + 'px';
-            star.style.top = y + 'px';
-            container.appendChild(star);
-            setTimeout(() => star.remove(), 800);
-        });
     }
 
     // (v28.11.2) تحسين أداء: النسخة القديمة كانت بتعمل querySelectorAll('.tx-mascot-pupil') وكمان
@@ -8972,6 +9062,7 @@
     }
 
     function setupFloatingMenu() {
+        ensureDesignSystemStyles();
         ensureMascotStyles();
 
         const menuContainer = document.createElement('div');
@@ -8990,75 +9081,96 @@
 
         const buttonsWrapper = document.createElement('div');
         buttonsWrapper.id = 'tx-buttons-wrapper';
-        buttonsWrapper.style.cssText = `
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            opacity: 0;
-            transform: translateY(20px) scale(0.95);
-            transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            pointer-events: none;
-            background: linear-gradient(165deg, rgba(40,40,58,0.55), rgba(12,12,20,0.74));
-            padding: 14px;
-            border-radius: 18px;
-            backdrop-filter: blur(26px) saturate(200%);
-            -webkit-backdrop-filter: blur(26px) saturate(200%);
-            border: 1px solid rgba(255,255,255,0.2);
-            box-shadow:
-                0 20px 50px rgba(0,0,0,0.55),
-                0 0 45px rgba(124,58,237,0.32),
-                0 0 20px rgba(56,189,248,0.14),
-                inset 0 1px 0 rgba(255,255,255,0.28);
-        `;
-        attachSparkleTrail(buttonsWrapper);
+        buttonsWrapper.className = 'tx-mn-panel';
 
         const mainBtn = document.createElement('button');
         mainBtn.className = 'tx-mascot-btn';
+        mainBtn.setAttribute('aria-expanded', 'false');
         mainBtn.innerHTML = `
             <span class="tx-mascot-face">
                 <span class="tx-mascot-eye"><span class="tx-mascot-pupil"></span></span>
                 <span class="tx-mascot-eye"><span class="tx-mascot-pupil"></span></span>
             </span>
-            <span class="tx-mascot-label">Transcription Tools</span>
+            <span class="tx-mascot-label"><span class="tx-mascot-text">Transcription Tools</span><span class="tx-mascot-x" title="إغلاق (Esc)">${txIcon('x', 12)}</span></span>
         `;
 
         initMascotEyes(mainBtn);
         scheduleAutoBlink(mainBtn);
 
-        const allToolButtons = document.querySelectorAll('.tx-tool-btn');
-        // (v29.23.8) أزرار الفحص دي متجمّعة في المراجعة الشاملة (F2)، فمخفية من القايمة (لسه موجودة في الصفحة عشان F2 بيستخدمها)
-        const hiddenInMenu = /فحص المسافات|فحص إنجليزي|فحص القواعد|فحص التاجات|فحص QA/;
-        allToolButtons.forEach(btn => {
-            if (hiddenInMenu.test(btn.textContent || '')) btn.style.setProperty('display', 'none', 'important');
-            btn.style.position = 'static';
-            btn.style.width = '100%';
-            btn.style.textAlign = 'right';
-            buttonsWrapper.appendChild(btn);
+        // (v29.31.0) تجميع الأزرار في مجموعات بعناوين (كل صف: زرار واحد بعرض كامل، أو زرارين جنب بعض في شبكة من عمودين).
+        // أي زرار مش مذكور هنا (أزرار الفحص: المسافات/إنجليزي/القواعد/التاجات/QA) بيفضل مخفي زي ما كان - F2 والاختصارات لسه بتستخدمه.
+        const MENU_GROUPS = [
+            { title: 'نسخ ولصق', rows: [['copyAll'], ['copyLast', 'paste']] },
+            { title: 'تعديل',    rows: [['undo', 'redo'], ['restore'], ['clearAll']] },
+            { title: 'مراجعة',   rows: [['review'], ['lastReview']] },
+            { title: 'إحصائيات', rows: [['statsDay', 'statsAll']] },
+            { title: 'إنهاء',    rows: [['finish']] }
+        ];
+        const toolBtns = {};
+        document.querySelectorAll('button[data-tx-tool="1"]').forEach(b => { toolBtns[b.dataset.txKey] = b; });
+        const placed = new Set();
+        MENU_GROUPS.forEach((group, gi) => {
+            const groupEl = document.createElement('div');
+            groupEl.className = 'tx-mn-group';
+            groupEl.style.setProperty('--i', gi);
+            buttonsWrapper.appendChild(groupEl);
+            const title = document.createElement('div');
+            title.className = 'tx-ds-group-title';
+            title.textContent = group.title;
+            groupEl.appendChild(title);
+            group.rows.forEach(keys => {
+                const btns = keys.map(k => toolBtns[k]).filter(Boolean);
+                if (btns.length === 0) return;
+                btns.forEach(b => { b.style.removeProperty('display'); placed.add(b); });
+                if (btns.length === 1) {
+                    groupEl.appendChild(btns[0]);
+                } else {
+                    const grid = document.createElement('div');
+                    grid.className = 'tx-mn-grid';
+                    btns.forEach(b => grid.appendChild(b));
+                    groupEl.appendChild(grid);
+                }
+            });
         });
+        // أزرار الفحص المجمّعة في المراجعة الشاملة (F2): مخفية من القايمة بس موجودة في الصفحة
+        const hiddenHolder = document.createElement('div');
+        hiddenHolder.style.display = 'none';
+        Object.keys(toolBtns).forEach(k => {
+            const b = toolBtns[k];
+            if (placed.has(b)) return;
+            b.style.setProperty('display', 'none', 'important');
+            hiddenHolder.appendChild(b);
+        });
+        buttonsWrapper.appendChild(hiddenHolder);
 
         let isOpen = false;
-        mainBtn.onclick = () => {
-            isOpen = !isOpen;
+        function setMenuOpen(open) {
+            isOpen = open;
+            txMenuOpen = open;
 
             const eyes = mainBtn.querySelectorAll('.tx-mascot-eye');
             eyes.forEach(eye => eye.classList.add('blink'));
             setTimeout(() => eyes.forEach(eye => eye.classList.remove('blink')), 180);
 
-            const label = mainBtn.querySelector('.tx-mascot-label');
-            if (isOpen) {
-                buttonsWrapper.style.opacity = '1';
-                buttonsWrapper.style.transform = 'translateY(0) scale(1)';
-                buttonsWrapper.style.pointerEvents = 'auto';
-                mainBtn.classList.add('open');
-                label.textContent = 'Close Menu ✕';
-            } else {
-                buttonsWrapper.style.opacity = '0';
-                buttonsWrapper.style.transform = 'translateY(20px) scale(0.95)';
-                buttonsWrapper.style.pointerEvents = 'none';
-                mainBtn.classList.remove('open');
-                label.textContent = 'Transcription Tools';
+            // قياس عرض النص الحقيقي قبل التحوّل عشان الحركة تبدأ فوراً (مش من max-width كبير وهمي)
+            const txt = mainBtn.querySelector('.tx-mascot-text');
+            if (txt) txt.style.maxWidth = txt.scrollWidth + 'px';
+            buttonsWrapper.classList.toggle('is-open', open);
+            mainBtn.classList.toggle('open', open);
+            mainBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            if (open) {
+                updateUndoRedoButtons();
+                txRefreshRestoreDot();
             }
-        };
+        }
+        mainBtn.onclick = () => setMenuOpen(!isOpen);
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape' || !isOpen) return;
+            const t = e.target;
+            if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return;
+            if (document.querySelector('.tx-panel-overlay')) return; // فيه لوحة/نافذة مفتوحة، الـEsc بتاعها الأول
+            setMenuOpen(false);
+        });
 
         menuContainer.appendChild(buttonsWrapper);
         const mainBtnWrap = document.createElement('div');
@@ -9201,7 +9313,7 @@
         // يتصلح، الصف بيتلوّن أصفر (tx-row-warn - موجودة أصلاً في الـCSS بس ما كانت مستخدمة قبل كده)
         // مش أحمر زي أي خطأ حقيقي. لو فيه رسالة واحدة بس مش ⚠️ (يعني خطأ فعلي، حتى مع تنبيهات جنبها)،
         // بيرجع أحمر عادي زي الأول.
-        const hasRealError = liveMessages.some(msg => !msg.startsWith('⚠️'));
+        const hasRealError = liveMessages.some(msg => txMsgSeverity(msg) === 'error');
 
         if (issues > 0) {
             setRowStatus(row, hasRealError ? 'error' : 'warn');
@@ -9239,16 +9351,9 @@
     let liveAutoFixToggleBtnRef = null; // (v28.17) دلوقتي بيشاور على صف "إصلاح تلقائي" جوه قايمة "🧰 أدوات سريعة" المدمجة، مش ودجت مستقل
 
     function updateLiveAutoFixToggleUI() {
-        const btn = liveAutoFixToggleBtnRef;
-        if (!btn) return;
-        const icon = btn.querySelector('.tx-qt-icon');
-        const label = btn.querySelector('.tx-qt-label');
-        if (icon) icon.textContent = liveAutoFixEnabled ? '✓' : '✕';
-        if (label) label.textContent = 'إصلاح تلقائي: ' + (liveAutoFixEnabled ? 'شغال' : 'متوقف');
-        btn.classList.toggle('tx-qt-on', liveAutoFixEnabled);
-        btn.title = liveAutoFixEnabled
+        qtSetSwitchRow(liveAutoFixToggleBtnRef, liveAutoFixEnabled, liveAutoFixEnabled
             ? 'الإصلاح التلقائي أثناء الكتابة شغال - الضغط لإيقافه'
-            : 'الإصلاح التلقائي أثناء الكتابة متوقف - الضغط لتشغيله';
+            : 'الإصلاح التلقائي أثناء الكتابة متوقف - الضغط لتشغيله');
     }
 
     function toggleLiveAutoFix() {
@@ -9271,16 +9376,9 @@
     let clickPasteDeniedShown = false;
 
     function updateClickPasteToggleUI() {
-        const btn = clickPasteToggleBtnRef;
-        if (!btn) return;
-        const icon = btn.querySelector('.tx-qt-icon');
-        const label = btn.querySelector('.tx-qt-label');
-        if (icon) icon.textContent = clickPasteEnabled ? '✓' : '✕';
-        if (label) label.textContent = 'لصق بالكليك: ' + (clickPasteEnabled ? 'شغال' : 'متوقف');
-        btn.classList.toggle('tx-qt-on', clickPasteEnabled);
-        btn.title = clickPasteEnabled
+        qtSetSwitchRow(clickPasteToggleBtnRef, clickPasteEnabled, clickPasteEnabled
             ? 'الكليك جوه سيجمنت فاضي بيلصق آخر نص اتنسخ - الضغط لإيقافه'
-            : 'اللصق بالكليك متوقف - الضغط لتشغيله';
+            : 'اللصق بالكليك متوقف - الضغط لتشغيله');
     }
 
     function toggleClickPaste() {
@@ -9477,20 +9575,20 @@
                 background: rgba(20,30,29,0.62);
                 backdrop-filter: blur(8px) saturate(160%);
                 -webkit-backdrop-filter: blur(8px) saturate(160%);
-                border: 1px solid rgba(45,212,191,0.18);
+                border: 1px solid rgba(var(--tx-accent),0.18);
                 border-radius: 10px; padding: 9px 12px; margin-bottom: 6px;
                 transition: background 0.15s ease, border-color 0.15s ease;
             }
-            .tx-kbd-row:hover { background: rgba(45,212,191,0.14); border-color: rgba(45,212,191,0.4); }
+            .tx-kbd-row:hover { background: rgba(var(--tx-accent),0.14); border-color: rgba(var(--tx-accent),0.4); }
             .tx-kbd-desc { color: #f1f5f9; font-size: 12.5px; font-weight: 600; }
             /* dir=ltr + unicode-bidi:isolate بيمنعوا خوارزمية الـ BiDi إنها تقلب ترتيب المفتاح الإنجليزي
                (زي F2 أو Ctrl+Shift+Z) جوه سطر عربي RTL */
             .tx-kbd-key {
                 direction: ltr; unicode-bidi: isolate; display: inline-block;
                 font-family: 'Consolas', 'Courier New', monospace; font-size: 11.5px; font-weight: 700;
-                color: #ccfbf1; background: rgba(45,212,191,0.16);
-                border: 1px solid rgba(45,212,191,0.4); border-radius: 7px;
-                padding: 3px 9px; text-shadow: 0 0 6px rgba(45,212,191,0.5);
+                color: #ccfbf1; background: rgba(var(--tx-accent),0.16);
+                border: 1px solid rgba(var(--tx-accent),0.4); border-radius: 7px;
+                padding: 3px 9px; text-shadow: 0 0 6px rgba(var(--tx-accent),0.5);
                 white-space: nowrap;
             }
             .tx-help-tabs { display: flex; gap: 6px; padding: 0 16px 10px; }
@@ -9503,23 +9601,23 @@
             }
             .tx-help-tab-btn:hover { color: #e2e8f0; background: rgba(255,255,255,0.07); }
             .tx-help-tab-btn.active {
-                background: linear-gradient(135deg, rgba(13,148,136,0.6), rgba(45,212,191,0.35));
-                border-color: rgba(45,212,191,0.6); color: #fff;
+                background: linear-gradient(135deg, rgba(var(--tx-accent),0.6), rgba(var(--tx-accent),0.35));
+                border-color: rgba(var(--tx-accent),0.6); color: #fff;
             }
             .tx-guide-item {
                 background: rgba(20,30,29,0.62);
                 backdrop-filter: blur(8px) saturate(160%);
                 -webkit-backdrop-filter: blur(8px) saturate(160%);
-                border-right: 3px solid rgba(45,212,191,0.55);
+                border-right: 3px solid rgba(var(--tx-accent),0.55);
                 border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
                 transition: background 0.15s ease, border-right-color 0.15s ease;
             }
-            .tx-guide-item:hover { background: rgba(45,212,191,0.14); border-right-color: #2dd4bf; }
-            .tx-guide-title { color: #99f6e4; font-size: 13px; font-weight: 800; margin-bottom: 3px; text-shadow: 0 0 8px rgba(45,212,191,0.3); }
+            .tx-guide-item:hover { background: rgba(var(--tx-accent),0.14); border-right-color: #2dd4bf; }
+            .tx-guide-title { color: #99f6e4; font-size: 13px; font-weight: 800; margin-bottom: 3px; text-shadow: 0 0 8px rgba(var(--tx-accent),0.3); }
             .tx-guide-short { color: #e2e8f0; font-size: 12px; line-height: 1.6; }
             .tx-guide-full {
                 color: #e2e8f0; font-size: 12px; line-height: 1.75; margin-top: 8px;
-                padding-top: 8px; border-top: 1px dashed rgba(45,212,191,0.2);
+                padding-top: 8px; border-top: 1px dashed rgba(var(--tx-accent),0.2);
                 display: none;
             }
             .tx-guide-item.tx-open .tx-guide-full { display: block; }
@@ -9527,37 +9625,37 @@
                 color: #99f6e4; font-size: 12px; font-weight: 800; margin-top: 8px;
                 display: inline-flex; align-items: center; gap: 4px;
                 padding: 4px 12px; border-radius: 999px;
-                background: rgba(45,212,191,0.14); border: 1px solid rgba(45,212,191,0.45);
+                background: rgba(var(--tx-accent),0.14); border: 1px solid rgba(var(--tx-accent),0.45);
                 transition: background 0.15s ease;
             }
-            .tx-guide-item:hover .tx-guide-readmore { background: rgba(45,212,191,0.28); }
+            .tx-guide-item:hover .tx-guide-readmore { background: rgba(var(--tx-accent),0.28); }
             /* (v28.31) شارات الأهمية + تقسيم الاختصارات والشرح */
             .tx-kbd-descwrap { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
-            .tx-kbd-row.tx-vip { border-color: rgba(251,191,36,0.55); background: rgba(251,191,36,0.08); }
+            .tx-kbd-row.tx-vip { border-color: rgba(var(--tx-warn),0.55); background: rgba(var(--tx-warn),0.08); }
             .tx-badge {
                 display: inline-block; font-size: 10.5px; font-weight: 800; line-height: 1;
                 padding: 3px 8px; border-radius: 999px; white-space: nowrap;
             }
-            .tx-badge-vip { color: #fde68a; background: rgba(251,191,36,0.18); border: 1px solid rgba(251,191,36,0.6); }
-            .tx-badge-top { color: #99f6e4; background: rgba(45,212,191,0.16); border: 1px solid rgba(45,212,191,0.5); }
-            .tx-badge-imp { color: #bae6fd; background: rgba(56,189,248,0.16); border: 1px solid rgba(56,189,248,0.5); }
+            .tx-badge-vip { color: #fde68a; background: rgba(var(--tx-warn),0.18); border: 1px solid rgba(var(--tx-warn),0.6); }
+            .tx-badge-top { color: #99f6e4; background: rgba(var(--tx-accent),0.16); border: 1px solid rgba(var(--tx-accent),0.5); }
+            .tx-badge-imp { color: #bae6fd; background: rgba(var(--tx-info),0.16); border: 1px solid rgba(var(--tx-info),0.5); }
             .tx-guide-titlerow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 3px; }
             .tx-guide-titlerow .tx-guide-title { margin-bottom: 0; }
             .tx-guide-when { color: #fde68a; font-size: 11.5px; line-height: 1.6; margin-top: 5px; }
             .tx-guide-when b { font-weight: 800; }
             .tx-guide-group-title {
                 color: #5eead4; font-size: 12.5px; font-weight: 800; margin: 14px 2px 8px;
-                padding-bottom: 4px; border-bottom: 1px solid rgba(45,212,191,0.25);
+                padding-bottom: 4px; border-bottom: 1px solid rgba(var(--tx-accent),0.25);
             }
             .tx-guide-basic-title { margin-top: 2px; }
             .tx-adv-toggle {
                 display: flex; align-items: center; justify-content: space-between; gap: 8px;
                 margin: 14px 0 6px; padding: 10px 14px; border-radius: 10px; cursor: pointer;
-                background: rgba(255,255,255,0.05); border: 1px dashed rgba(45,212,191,0.45);
+                background: rgba(255,255,255,0.05); border: 1px dashed rgba(var(--tx-accent),0.45);
                 color: #ccfbf1; font-size: 12.5px; font-weight: 800;
                 transition: background 0.15s ease;
             }
-            .tx-adv-toggle:hover, .tx-adv-toggle.tx-open { background: rgba(45,212,191,0.14); }
+            .tx-adv-toggle:hover, .tx-adv-toggle.tx-open { background: rgba(var(--tx-accent),0.14); }
             .tx-adv-arrow { font-size: 14px; }
             .tx-start-intro { color: #e2e8f0; font-size: 12.5px; font-weight: 700; line-height: 1.7; margin: 2px 2px 10px; }
             .tx-start-step {
@@ -9565,13 +9663,13 @@
                 background: rgba(20,30,29,0.62);
                 backdrop-filter: blur(8px) saturate(160%);
                 -webkit-backdrop-filter: blur(8px) saturate(160%);
-                border: 1px solid rgba(45,212,191,0.18);
+                border: 1px solid rgba(var(--tx-accent),0.18);
                 border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
             }
             .tx-start-num {
                 flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%;
                 display: flex; align-items: center; justify-content: center;
-                background: linear-gradient(135deg, rgba(13,148,136,0.85), rgba(45,212,191,0.55));
+                background: linear-gradient(135deg, rgba(var(--tx-accent),0.85), rgba(var(--tx-accent),0.55));
                 color: #fff; font-size: 13px; font-weight: 800;
             }
             .tx-start-info { flex: 1; min-width: 0; }
@@ -9580,7 +9678,7 @@
             .tx-start-keys { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
             .tx-start-tip {
                 margin-top: 10px; padding: 10px 12px; border-radius: 10px;
-                background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.35);
+                background: rgba(var(--tx-warn),0.08); border: 1px solid rgba(var(--tx-warn),0.35);
                 color: #fde68a; font-size: 12px; line-height: 1.7;
             }
         `;
@@ -9916,206 +10014,950 @@
         document.addEventListener('keydown', escHandler);
     }
 
-    // ==================== 🧰 أدوات سريعة - قايمة مدمجة بدل 3 ودجتس منفصلة (v28.17) ====================
-    // قبل كده كان فيه 3 ودجتس ثابتة منفصلة على الشمال (إصلاح تلقائي/مساعدة/تباين مريح)، كل واحدة
-    // شاغلة مكانها لوحدها طول الوقت - المستخدم طلب دمجهم في زرار واحد بيفتح/يقفل قايمة صغيرة تحته
-    // عشان الشمال ميبقاش عايم ومزحوم. التايمر (⏱️) اتسيب لوحده برّة زي ما هو بالظبط (المستخدم طلب
-    // كده بالتحديد لأنه بيتغيّر لايف وعايز يتابعه من غير ما يفتح حاجة) - محطوط في نفس مكان أول ودجت
-    // قديم (top:516px) عشان الترتيب يفضل منطقي (القايمة المدمجة فوق، التايمر تحتها).
+    // ==================== 🎨 نظام التصميم الموحّد (v29.30.0) ====================
+    // مصدر واحد للألوان والمسافات والمكوّنات المشتركة (سويتش، segmented، كيبورد، أزرار، أيقونات SVG).
+    // قاعدة الألوان: اللون ليه معنى ثابت في كل الأداة بدل ألوان عشوائية:
+    //   تركواز (--tx-accent) = الأساسي/المحدد/الفوكس   |  أخضر (--tx-ok) = شغال/نجاح
+    //   عنبري (--tx-warn)    = بريك/تنبيه               |  أحمر (--tx-danger) = إنهاء/خطر
+    //   أزرق (--tx-info)     = معلومة/إحصائيات      |  بنفسجي (--tx-review) = فحص/مراجعة (v29.31.0)
+    // القيم بصيغة "r,g,b" عشان نستخدمها مع rgba(var(--tx-ok), .3) بأي شفافية.
+    // أي قايمة/زرار جديد (قايمة التاسكات والأزرار هتتحول بعد كده) بيستخدم نفس الـtokens والـclasses دي (tx-ds-*).
+    function ensureDesignSystemStyles() {
+        if (document.getElementById('tx-ds-style')) return;
+        const style = document.createElement('style');
+        style.id = 'tx-ds-style';
+        style.textContent = `
+            :root {
+                --tx-font: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+                --tx-accent: 45,212,191;
+                --tx-ok: 74,222,128;
+                --tx-warn: 251,191,36;
+                --tx-danger: 248,113,113;
+                --tx-info: 96,165,250;
+                --tx-review: 167,139,250;
+                --tx-surface-0: rgba(10,13,20,0.9);
+                --tx-surface-1: rgba(255,255,255,0.045);
+                --tx-surface-2: rgba(255,255,255,0.085);
+                --tx-border: rgba(148,163,184,0.22);
+                --tx-border-strong: rgba(148,163,184,0.42);
+                --tx-text: #e2e8f0;
+                --tx-text-dim: #94a3b8;
+                --tx-radius-sm: 8px;
+                --tx-radius-md: 10px;
+                --tx-radius-lg: 14px;
+                --tx-shadow-pop: 0 12px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);
+                --tx-ease: cubic-bezier(0.4, 0, 0.2, 1);
+            }
+            .tx-ds-icon { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+            .tx-ds-group-title {
+                font: 800 10.5px var(--tx-font); color: var(--tx-text-dim);
+                padding: 8px 4px 1px; letter-spacing: 0.02em;
+            }
+            .tx-ds-group-title:first-child { padding-top: 2px; }
+
+            /* سويتش حقيقي: أخضر = شغال، رمادي = متوقف. الحالة بتبان من بعيد من غير ما تقرا */
+            .tx-ds-switch {
+                position: relative; flex-shrink: 0; width: 34px; height: 19px; border-radius: 999px;
+                background: rgba(148,163,184,0.25); border: 1px solid rgba(148,163,184,0.4);
+                transition: background 0.2s var(--tx-ease), border-color 0.2s var(--tx-ease), box-shadow 0.2s var(--tx-ease);
+            }
+            .tx-ds-switch i {
+                position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+                background: #cbd5e1; transform: translateX(15px);
+                transition: transform 0.2s var(--tx-ease), background 0.2s var(--tx-ease);
+            }
+            [aria-checked="true"] > .tx-ds-switch {
+                background: rgba(var(--tx-ok), 0.35); border-color: rgba(var(--tx-ok), 0.8);
+                box-shadow: 0 0 8px rgba(var(--tx-ok), 0.35);
+            }
+            [aria-checked="true"] > .tx-ds-switch i { transform: translateX(0); background: rgb(var(--tx-ok)); }
+
+            /* segmented control: بدل زرار بيلف على الاختيارات، كل الاختيارات ظاهرة وتختار منها مباشرة */
+            .tx-ds-seg {
+                display: flex; gap: 2px; padding: 2px; direction: rtl;
+                background: rgba(0,0,0,0.32); border: 1px solid var(--tx-border); border-radius: var(--tx-radius-md);
+            }
+            .tx-ds-seg button {
+                flex: 1; border: 0; background: transparent; color: var(--tx-text-dim);
+                font: 700 11.5px var(--tx-font); padding: 5px 4px; border-radius: var(--tx-radius-sm); cursor: pointer;
+                transition: background 0.15s var(--tx-ease), color 0.15s var(--tx-ease), box-shadow 0.15s var(--tx-ease);
+            }
+            .tx-ds-seg button:hover { color: var(--tx-text); background: var(--tx-surface-2); }
+            .tx-ds-seg button[aria-checked="true"] {
+                background: rgba(var(--tx-accent), 0.2); color: #ccfbf1;
+                box-shadow: inset 0 0 0 1px rgba(var(--tx-accent), 0.6);
+            }
+
+            .tx-ds-kbd {
+                font: 700 10px ui-monospace, Consolas, monospace; color: var(--tx-text-dim);
+                background: rgba(0,0,0,0.35); border: 1px solid var(--tx-border-strong); border-bottom-width: 2px;
+                border-radius: 5px; padding: 0 4px; line-height: 15px; direction: ltr;
+            }
+
+            .tx-ds-btn {
+                flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+                padding: 6px 8px; border-radius: var(--tx-radius-md); cursor: pointer; white-space: nowrap;
+                background: var(--tx-surface-1); border: 1px solid var(--tx-border); color: var(--tx-text);
+                font: 700 11.5px var(--tx-font);
+                transition: background 0.15s var(--tx-ease), border-color 0.15s var(--tx-ease), box-shadow 0.15s var(--tx-ease), transform 0.15s var(--tx-ease);
+            }
+            .tx-ds-btn:hover { background: var(--tx-surface-2); border-color: rgba(var(--tx-accent), 0.65); }
+            .tx-ds-btn:active { transform: scale(0.97); }
+            .tx-ds-btn.is-primary { background: rgba(var(--tx-accent), 0.14); border-color: rgba(var(--tx-accent), 0.5); color: #ccfbf1; }
+            .tx-ds-btn.is-warn    { background: rgba(var(--tx-warn), 0.14);   border-color: rgba(var(--tx-warn), 0.55);   color: #fde68a; }
+            .tx-ds-btn.is-danger  { background: rgba(var(--tx-danger), 0.14); border-color: rgba(var(--tx-danger), 0.55); color: #fecaca; }
+            .tx-ds-btn.is-primary:hover { background: rgba(var(--tx-accent), 0.24); box-shadow: 0 0 10px rgba(var(--tx-accent), 0.35); }
+            .tx-ds-btn.is-warn:hover    { background: rgba(var(--tx-warn), 0.24);   border-color: rgba(var(--tx-warn), 0.85);   box-shadow: 0 0 10px rgba(var(--tx-warn), 0.35); }
+            .tx-ds-btn.is-danger:hover  { background: rgba(var(--tx-danger), 0.24); border-color: rgba(var(--tx-danger), 0.85); box-shadow: 0 0 10px rgba(var(--tx-danger), 0.35); }
+
+            .tx-ds-focusable:focus-visible, .tx-ds-btn:focus-visible, .tx-ds-seg button:focus-visible {
+                outline: 2px solid rgba(var(--tx-accent), 0.85); outline-offset: 1px;
+            }
+
+
+            /* ===== (v29.31.0) تكملة نظام التصميم لأزرار قائمة Transcription Tools ===== */
+            .tx-ds-btn .tx-b-ico { display: grid; place-items: center; width: 16px; height: 16px; flex-shrink: 0; }
+            .tx-ds-btn .tx-b-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+            .tx-ds-btn .tx-b-count {
+                min-width: 18px; height: 16px; padding: 0 5px; box-sizing: border-box; border-radius: 999px; text-align: center;
+                font: 800 10.5px/16px var(--tx-font); font-variant-numeric: tabular-nums;
+                background: rgba(148,163,184,0.28); color: #e2e8f0;
+            }
+            .tx-ds-btn .tx-b-dot {
+                width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+                background: rgb(var(--tx-warn)); box-shadow: 0 0 8px rgba(var(--tx-warn), 0.85);
+            }
+            .tx-ds-btn .tx-b-count[hidden], .tx-ds-btn .tx-b-dot[hidden] { display: none; }
+
+            .tx-ds-btn.is-ok     { background: rgba(var(--tx-ok), 0.13);     border-color: rgba(var(--tx-ok), 0.5);     color: #bbf7d0; }
+            .tx-ds-btn.is-info   { background: rgba(var(--tx-info), 0.13);   border-color: rgba(var(--tx-info), 0.5);   color: #bfdbfe; }
+            .tx-ds-btn.is-review { background: rgba(var(--tx-review), 0.14); border-color: rgba(var(--tx-review), 0.5); color: #ddd6fe; }
+            .tx-ds-btn.is-ok:hover     { background: rgba(var(--tx-ok), 0.24);     border-color: rgba(var(--tx-ok), 0.85);     box-shadow: 0 0 10px rgba(var(--tx-ok), 0.35); }
+            .tx-ds-btn.is-info:hover   { background: rgba(var(--tx-info), 0.24);   border-color: rgba(var(--tx-info), 0.85);   box-shadow: 0 0 10px rgba(var(--tx-info), 0.35); }
+            .tx-ds-btn.is-review:hover { background: rgba(var(--tx-review), 0.24); border-color: rgba(var(--tx-review), 0.85); box-shadow: 0 0 10px rgba(var(--tx-review), 0.35); }
+
+            .tx-ds-btn:disabled, .tx-ds-btn:disabled:hover {
+                opacity: 0.42; cursor: not-allowed; box-shadow: none; transform: none;
+                background: var(--tx-surface-1); border-color: var(--tx-border);
+            }
+            /* تأكيد النجاح على الزرار نفسه (ثانية واحدة) */
+            .tx-ds-btn.is-done, .tx-ds-btn.is-done:hover {
+                background: rgba(var(--tx-ok), 0.26); border-color: rgba(var(--tx-ok), 0.9); color: #dcfce7;
+                box-shadow: 0 0 12px rgba(var(--tx-ok), 0.4);
+            }
+            .tx-ds-btn.is-busy { cursor: progress; }
+            .tx-ds-btn.is-busy .tx-b-ico { animation: tx-ds-spin 0.8s linear infinite; }
+            @keyframes tx-ds-spin { to { transform: rotate(360deg); } }
+
+            @media (prefers-reduced-motion: reduce) {
+                .tx-ds-switch, .tx-ds-switch i, .tx-ds-seg button, .tx-ds-btn { transition: none; }
+                .tx-ds-btn.is-busy .tx-b-ico { animation: none; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // أيقونات SVG خطية موحّدة (نفس السُمك والشكل) بدل الإيموجي المختلفة بين الأجهزة
+    const TX_ICON_PATHS = {
+        menu:    '<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>',
+        wand:    '<path d="M12 3l1.8 4.6L18.5 9.5l-4.7 1.9L12 16l-1.8-4.6L5.5 9.5l4.7-1.9z"/><path d="M19 15l.7 1.8L21.5 17.5l-1.8.7L19 20l-.7-1.8-1.8-.7 1.8-.7z"/>',
+        click:   '<path d="M9 9l5 12 1.8-5.2L21 14z"/><path d="M7.2 2.2L8 5.1"/><path d="M2.2 7.2L5.1 8"/><path d="M14 3.5L12 6"/><path d="M6 12l-2.3 2"/>',
+        clock:   '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
+        flag:    '<path d="M5 22V4"/><path d="M5 4h13l-2.5 4L18 12H5"/>',
+        coffee:  '<path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"/><path d="M7 2v2"/><path d="M11 2v2"/><path d="M15 2v2"/>',
+        stop:    '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+        star:    '<path d="M12 2.5l2.9 6.2 6.8.9-5 4.7 1.3 6.7L12 17.7 6 21l1.3-6.7-5-4.7 6.8-.9z"/>',
+        volume:  '<path d="M11 5L6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>',
+        mute:    '<path d="M11 5L6 9H2v6h4l5 4z"/><line x1="17" y1="9" x2="23" y2="15"/><line x1="23" y1="9" x2="17" y2="15"/>',
+        contrast:'<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
+        help:    '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4"/><line x1="12" y1="17.5" x2="12" y2="17.51"/>',
+        copy:    '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+        clipboard: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>',
+        paste:   '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M12 11v6"/><path d="M9.5 14.5L12 17l2.5-2.5"/>',
+        trash:   '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
+        shield:  '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
+        undo:    '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
+        redo:    '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+        history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/><polyline points="12 7 12 12 15 14"/>',
+        barChart:'<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+        trendUp: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
+        fileText:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+        checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+        checkSquare: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+        check:   '<polyline points="20 6 9 17 4 12"/>',
+        x:       '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+        loader:  '<path d="M21 12a9 9 0 1 1-6.2-8.55"/>',
+        search:  '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+        type:    '<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>',
+        edit:    '<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+        tag:     '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>',
+        alert:      '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+        alertCircle:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+        xCircle:    '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>',
+        info:       '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+        rocket:     '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
+        ruler:      '<path d="M21.3 15.3l-12-12a1 1 0 0 0-1.4 0L2.7 8.5a1 1 0 0 0 0 1.4l12 12a1 1 0 0 0 1.4 0l5.2-5.2a1 1 0 0 0 0-1.4z"/><path d="M7.5 10.5l2 2"/><path d="M10.5 7.5l2 2"/><path d="M13.5 4.5l2 2"/><path d="M4.5 13.5l2 2"/>',
+        target:     '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+        wrench:     '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+        hourglass:  '<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22"/><path d="M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2"/>',
+        timer:      '<line x1="10" y1="2" x2="14" y2="2"/><line x1="12" y1="14" x2="15" y2="11"/><circle cx="12" cy="14" r="8"/>',
+        mic:        '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/>',
+        link:       '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+        hash:       '<line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/>',
+        languages:  '<path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/>',
+        refresh:    '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+        repeat:     '<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
+        calendar:   '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+        trophy:     '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/>',
+        flame:      '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>',
+        zap:        '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+        play:       '<polygon points="5 3 19 12 5 21 5 3"/>',
+        pause:      '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>',
+        download:   '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+        upload:     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+        save:       '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>',
+        folder:     '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+        layers:     '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+        scissors:   '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>',
+        key:        '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>',
+        keyboard:   '<rect x="2" y="4" width="20" height="16" rx="2" ry="2"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="8" y1="12" x2="8.01" y2="12"/><line x1="12" y1="12" x2="12.01" y2="12"/><line x1="16" y1="12" x2="16.01" y2="12"/><line x1="7" y1="16" x2="17" y2="16"/>',
+        book:       '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+        pin:        '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
+        paperclip:  '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+        moon:       '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+        sun:        '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+        sunset:     '<path d="M17 18a5 5 0 0 0-10 0"/><line x1="12" y1="9" x2="12" y2="2"/><line x1="4.22" y1="10.22" x2="5.64" y2="11.64"/><line x1="1" y1="18" x2="3" y2="18"/><line x1="21" y1="18" x2="23" y2="18"/><line x1="18.36" y1="11.64" x2="19.78" y2="10.22"/><line x1="23" y1="22" x2="1" y2="22"/><polyline points="16 5 12 9 8 5"/>',
+        dot:        '<circle cx="12" cy="12" r="5" fill="currentColor" stroke="none"/>',
+        ringDot:    '<circle cx="12" cy="12" r="6"/>',
+        file:       '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>',
+        lightbulb:  '<line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="22" x2="14" y2="22"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/>',
+        film:       '<rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/>',
+        eraser:     '<path d="M7 21l-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="M5 11l9 9"/>',
+        layout:     '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>',
+        settings:   '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'
+    };
+
+    function txIcon(name, size) {
+        const px = size || 16;
+        // (v29.33.0) الأيكونات كانت بتظهر مقلوبة ١٨٠° (الكوباية وفتحتها لتحت، المايك مقلوب، الصح معكوس). مفيش أي قاعدة CSS
+        // في الاسكريبت بتلف الـSVG، فالمصدر غالباً CSS من الموقع نفسه. الحل: نثبّت transform/rotate/scale = none بـ!important
+        // inline على الـSVG نفسه (الـinline المهم بيكسب على أي stylesheet)، وdirection:ltr عشان الـBiDi مايأثرش. التدوير
+        // الوحيد المسموح (سبينر الزرار) اتنقل على الـwrapper (.tx-b-ico) مش على الـSVG.
+        return '<svg class="tx-ds-icon" viewBox="0 0 24 24" width="' + px + '" height="' + px + '" aria-hidden="true" focusable="false" style="transform:none!important;rotate:none!important;scale:none!important;direction:ltr;unicode-bidi:isolate">' + (TX_ICON_PATHS[name] || '') + '</svg>';
+    }
+
+    // ==================== (v29.32.0) نظام الـPopup الموحّد ====================
+    // كل النوافذ المنبثقة (نتائج/مراجعة/إحصائيات/تأكيد/لصق/مساعدة/بريك/هدف/مركز التاسكات/توست) بقت بتستخدم نفس الـtokens
+    // ونفس مكوّنات نظام التصميم: surface واحد، حدود تركواز، أزرار tx-panel-btn (نفس tones: primary/ok/warn/danger/info)،
+    // تابات segmented واحدة، حقول إدخال موحّدة، وأيقونات SVG خطية بدل الإيموجي.
+    // الإيموجي اللي جوه النوافذ بتتحوّل تلقائي لأيقونة (والإيموجي الأصلي بيفضل مخفي جوه الأيقونة فالنسخ/التحديد يفضل شغال)
+    // من غير ما نعدّل كل مكان بيكتب label بإيموجي. الاحتفالات/الماسكوت متسابة عمداً بالإيموجي.
+    const TX_EMOJI_ICONS = [
+        ['✅', 'checkCircle', 'ok'], ['✔', 'check', 'ok'], ['✓', 'check', ''], ['✕', 'x', ''], ['✖', 'x', ''],
+        ['❌', 'xCircle', 'danger'], ['🚫', 'xCircle', 'danger'], ['🛑', 'stop', 'danger'],
+        ['⚠', 'alert', 'warn'], ['🚨', 'alertCircle', 'danger'], ['ℹ', 'info', 'info'],
+        ['🚀', 'rocket', ''], ['🎯', 'target', ''], ['📏', 'ruler', ''], ['📐', 'ruler', ''],
+        ['🔤', 'type', ''], ['🈯', 'languages', ''], ['🔢', 'hash', ''], ['🔗', 'link', ''],
+        ['✏', 'edit', ''], ['✍', 'edit', ''], ['📝', 'fileText', ''], ['🧾', 'fileText', ''], ['📄', 'file', ''],
+        ['📋', 'clipboard', ''], ['📎', 'paperclip', ''], ['📌', 'pin', ''], ['📍', 'pin', ''],
+        ['📊', 'barChart', ''], ['📈', 'trendUp', ''], ['📅', 'calendar', ''], ['🏷', 'tag', ''],
+        ['⏱', 'timer', ''], ['⏳', 'hourglass', ''], ['⌛', 'hourglass', ''], ['🕒', 'clock', ''], ['🕘', 'clock', ''], ['⏰', 'clock', ''],
+        ['☕', 'coffee', ''], ['🗣', 'mic', ''], ['🔍', 'search', ''], ['🔎', 'search', ''],
+        ['🔧', 'wrench', ''], ['🛠', 'wrench', ''], ['🧰', 'wrench', ''], ['🩹', 'wrench', ''], ['⚙', 'settings', ''],
+        ['🧹', 'eraser', ''], ['🧼', 'eraser', ''], ['🗑', 'trash', ''], ['✂', 'scissors', ''],
+        ['🔄', 'refresh', ''], ['🔁', 'repeat', ''], ['↩', 'undo', ''], ['↪', 'redo', ''],
+        ['▶', 'play', ''], ['⏸', 'pause', ''], ['⏹', 'stop', ''],
+        ['📤', 'upload', ''], ['📥', 'download', ''], ['💾', 'save', ''], ['📂', 'folder', ''], ['📁', 'folder', ''], ['🗂', 'layers', ''],
+        ['⌨', 'keyboard', ''], ['📖', 'book', ''], ['📕', 'book', ''], ['💡', 'lightbulb', ''], ['❔', 'help', ''],
+        ['🔑', 'key', ''], ['🎬', 'film', ''], ['🪟', 'layout', ''], ['🔊', 'volume', ''], ['🔇', 'mute', ''],
+        ['🔥', 'flame', 'warn'], ['⚡', 'zap', 'warn'], ['⭐', 'star', 'warn'], ['🌟', 'star', 'warn'],
+        ['🏆', 'trophy', 'warn'], ['🥇', 'trophy', 'warn'], ['🏅', 'trophy', 'warn'], ['🎖', 'trophy', 'warn'],
+        ['☀', 'sun', ''], ['🌤', 'sun', ''], ['🌇', 'sunset', ''], ['🌙', 'moon', ''], ['💤', 'moon', ''],
+        ['🏁', 'flag', ''], ['👋', 'flag', ''], ['✨', 'wand', ''],
+        ['🟢', 'dot', 'ok'], ['🟡', 'dot', 'warn'], ['🔴', 'dot', 'danger'], ['⚪', 'ringDot', '']
+    ];
+    const TX_EMOJI_MAP = (() => {
+        const m = {};
+        TX_EMOJI_ICONS.forEach(e => { m[e[0]] = { icon: e[1], tone: e[2] }; });
+        return m;
+    })();
+    const TX_EMOJI_SRC = '(' + TX_EMOJI_ICONS.map(e => e[0]).sort((a, b) => b.length - a.length).join('|') + ')\\uFE0F?|([\\u{1F1E6}-\\u{1F1FF}]{2})';
+    const TX_POPUP_ROOT_SEL = '.tx-panel-overlay, .tx-panel-toast, #tx-tc-pill, .tx-tc-undo, .tx-brk-pill, .tx-brk-suggest, .tx-row-err-tooltip';
+
+    function txFlagCode(pair) {
+        let out = '';
+        for (const ch of pair) out += String.fromCharCode(ch.codePointAt(0) - 0x1F1E6 + 65);
+        return out;
+    }
+
+    function txIconizeTextNode(node) {
+        try {
+            const text = node.nodeValue;
+            if (!text) return;
+            const re = new RegExp(TX_EMOJI_SRC, 'gu');
+            if (!re.test(text)) return;
+            const p = node.parentElement;
+            if (!p || p.closest('textarea, script, style, .tx-emo, [data-tx-raw]')) return;
+            re.lastIndex = 0;
+            const frag = document.createDocumentFragment();
+            let last = 0, m;
+            while ((m = re.exec(text))) {
+                if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+                const span = document.createElement('span');
+                if (m[2]) {
+                    span.className = 'tx-emo tx-emo-flag';
+                    span.textContent = txFlagCode(m[2]);
+                } else {
+                    const info = TX_EMOJI_MAP[m[1]];
+                    span.className = 'tx-emo' + (info.tone ? ' is-' + info.tone : '');
+                    span.innerHTML = txIcon(info.icon, 16);
+                    const t = document.createElement('i');
+                    t.className = 'tx-emo-t';
+                    t.textContent = m[0];
+                    span.appendChild(t);
+                }
+                frag.appendChild(span);
+                last = m.index + m[0].length;
+            }
+            if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+            node.parentNode.replaceChild(frag, node);
+        } catch (e) { /* لو الأيقونات لسه متحمّلتش بنسيب الإيموجي زي ما هو */ }
+    }
+
+    function txIconizeNode(root) {
+        if (!root) return;
+        if (root.nodeType === 3) { txIconizeTextNode(root); return; }
+        if (root.nodeType !== 1) return;
+        const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const list = [];
+        let n;
+        while ((n = w.nextNode())) list.push(n);
+        list.forEach(txIconizeTextNode);
+    }
+
+    function txStartPopupIconizer() {
+        if (window.__txPopupIconizer || !document.body) return;
+        const rootSel = TX_POPUP_ROOT_SEL; // لو لسه مش متهيّأ هيرمي خطأ قبل ما نعلّم إننا بدأنا (فيتعاد المحاولة المرة الجاية)
+        const hook = (el) => {
+            txIconizeNode(el);
+            const o = new MutationObserver((ms) => {
+                ms.forEach(m => m.addedNodes.forEach(a => { if (a.nodeType === 3 || a.nodeType === 1) txIconizeNode(a); }));
+            });
+            o.observe(el, { childList: true, subtree: true });
+            el.__txIconObs = o;
+        };
+        new MutationObserver((ms) => {
+            ms.forEach(m => m.addedNodes.forEach(n => {
+                if (n.nodeType === 1 && n.matches && n.matches(rootSel)) hook(n);
+            }));
+        }).observe(document.body, { childList: true });
+        window.__txPopupIconizer = true;
+        document.querySelectorAll(rootSel).forEach(hook);
+    }
+
+    function ensurePopupSystemStyles() {
+        if (document.getElementById('tx-popup-system-style')) return;
+        const style = document.createElement('style');
+        style.id = 'tx-popup-system-style';
+        // (:root قدّام كل سلكتور = أولوية أعلى عشان الطبقة دي تكسب على أي CSS قديم من غير ما نعتمد على ترتيب الحقن)
+        style.textContent = `
+            .tx-emo { position: relative; display: inline-flex; align-items: center; vertical-align: -0.2em; margin-inline: 0.12em; line-height: 1; }
+            .tx-emo svg { display: block; width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+            .tx-emo-t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; font-size: 0; }
+            .tx-emo.is-ok { color: rgb(var(--tx-ok)); } .tx-emo.is-warn { color: rgb(var(--tx-warn)); }
+            .tx-emo.is-danger { color: rgb(var(--tx-danger)); } .tx-emo.is-info { color: rgb(var(--tx-info)); }
+            .tx-emo-flag { font: 800 0.72em/1 ui-monospace, Consolas, monospace; padding: 2px 5px; border-radius: 5px; letter-spacing: .5px;
+                background: var(--tx-surface-2); border: 1px solid var(--tx-border-strong); color: var(--tx-text-dim); vertical-align: 0.05em; }
+
+            /* تابات موحّدة (المراجعة + المساعدة) = نفس segmented بتاع Quick Tools */
+            :root .tx-review-tabbar, :root .tx-help-tabs {
+                display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; margin: 10px 14px 0;
+                background: rgba(0,0,0,0.32); border: 1px solid var(--tx-border); border-radius: var(--tx-radius-md);
+            }
+            :root .tx-review-tab, :root .tx-help-tab-btn {
+                display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+                flex: 0 0 auto; padding: 6px 12px; border-radius: var(--tx-radius-sm); border: 0;
+                background: transparent; color: var(--tx-text-dim); font: 700 11.5px var(--tx-font); cursor: pointer; white-space: nowrap;
+                box-shadow: none; transition: background 0.15s var(--tx-ease), color 0.15s var(--tx-ease), box-shadow 0.15s var(--tx-ease);
+            }
+            :root .tx-help-tab-btn { flex: 1 1 0; }
+            :root .tx-review-tab:hover, :root .tx-help-tab-btn:hover { color: var(--tx-text); background: var(--tx-surface-2); }
+            :root .tx-review-tab.active, :root .tx-help-tab-btn.active {
+                background: rgba(var(--tx-accent), 0.2); color: #ccfbf1; border: 0;
+                box-shadow: inset 0 0 0 1px rgba(var(--tx-accent), 0.6);
+            }
+
+            /* ===== (v29.32.3) نافذة معتمة هادية: أقرب للأصل في الدرجة، بس من غير شفافية وبنص وحدود أوضح شوية ===== */
+            :root .tx-panel-overlay { background: rgba(3,5,10,0.6); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
+            :root .tx-panel-box {
+                --tx-surface-1: rgba(255,255,255,0.05);
+                --tx-surface-2: rgba(255,255,255,0.09);
+                --tx-border: rgba(148,163,184,0.24);
+                --tx-border-strong: rgba(148,163,184,0.44);
+                --tx-text: #e2e8f0;
+                --tx-text-dim: #a1afc2;
+                background: #0c111b;
+                backdrop-filter: none; -webkit-backdrop-filter: none;
+                border: 1px solid rgba(var(--tx-accent), 0.3);
+                box-shadow: 0 12px 32px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.03);
+            }
+            :root .tx-panel-btn.copy   { background: rgba(var(--tx-accent), 0.15); border-color: rgba(var(--tx-accent), 0.5); color: #ccfbf1; }
+            :root .tx-panel-btn.fix    { background: rgba(var(--tx-ok), 0.14);     border-color: rgba(var(--tx-ok), 0.5);     color: #bbf7d0; }
+            :root .tx-panel-btn.warn   { background: rgba(var(--tx-warn), 0.15);   border-color: rgba(var(--tx-warn), 0.55);   color: #fde68a; }
+            :root .tx-panel-btn.danger { background: rgba(var(--tx-danger), 0.15); border-color: rgba(var(--tx-danger), 0.55); color: #fecaca; }
+            :root .tx-panel-btn.info   { background: rgba(var(--tx-info), 0.14);   border-color: rgba(var(--tx-info), 0.5);   color: #bfdbfe; }
+            :root .tx-panel-btn.review { background: rgba(var(--tx-review), 0.15); border-color: rgba(var(--tx-review), 0.5); color: #ddd6fe; }
+            :root .tx-review-tabbar, :root .tx-help-tabs { background: rgba(0,0,0,0.32); border-color: rgba(148,163,184,0.24); }
+            :root .tx-review-tab.active, :root .tx-help-tab-btn.active {
+                background: rgba(var(--tx-accent), 0.2); color: #ccfbf1;
+                box-shadow: inset 0 0 0 1px rgba(var(--tx-accent), 0.6);
+            }
+            :root .tx-panel-item.warn { background: rgba(var(--tx-danger), 0.08); }
+            :root .tx-panel-item.info { background: rgba(var(--tx-info), 0.08); }
+            :root .tx-panel-item.ok   { background: rgba(var(--tx-ok), 0.07); }
+            :root .tx-panel-item:hover { background: rgba(255,255,255,0.08); }
+            :root .tx-panel-empty { background: rgba(var(--tx-ok), 0.08); border-color: rgba(var(--tx-ok), 0.28); }
+
+            /* حقول الإدخال الموحّدة */
+            :root .tx-cmdk-input, :root .tx-brk-d-input, :root .tx-goalp-input, :root .tx-tc-note, :root .tx-tc-search, :root .tx-paste-ta {
+                background: rgba(0,0,0,0.32); border: 1px solid var(--tx-border); border-radius: var(--tx-radius-md);
+                color: var(--tx-text); font-family: var(--tx-font); outline: none;
+                transition: border-color 0.15s var(--tx-ease), box-shadow 0.15s var(--tx-ease), background 0.15s var(--tx-ease);
+            }
+            :root .tx-cmdk-input:focus, :root .tx-brk-d-input:focus, :root .tx-goalp-input:focus, :root .tx-tc-note:focus, :root .tx-tc-search:focus, :root .tx-paste-ta:focus {
+                border-color: rgba(var(--tx-accent), 0.7); box-shadow: 0 0 0 3px rgba(var(--tx-accent), 0.16); background: rgba(0,0,0,0.42);
+            }
+            :root .tx-goalp-input.bad, :root .tx-brk-d-input.tx-brk-bad { border-color: rgb(var(--tx-danger)); box-shadow: 0 0 0 3px rgba(var(--tx-danger), 0.16); }
+            :root .tx-cmdk-input-wrap { border-bottom: 1px solid var(--tx-border); }
+            :root .tx-cmdk-item { color: var(--tx-text); font-family: var(--tx-font); border-radius: var(--tx-radius-md); }
+            :root .tx-cmdk-item:hover, :root .tx-cmdk-item.tx-cmdk-active { background: rgba(var(--tx-accent), 0.18); color: #ccfbf1; }
+
+            /* نافذة اللصق */
+            .tx-paste-label { color: var(--tx-text-dim); font: 700 12.5px var(--tx-font); margin-bottom: 8px; }
+            .tx-paste-ta { width: 100%; height: 320px; padding: 10px 12px; font-size: 13.5px; direction: rtl; resize: vertical; box-sizing: border-box; line-height: 1.8; }
+
+            /* أزرار نافذة البريك والهدف (chips / steps) */
+            :root .tx-brk-btn, :root .tx-goalp-step, :root .tx-goalp-chip, :root .tx-dialect-btn {
+                background: var(--tx-surface-1); border: 1px solid var(--tx-border); color: var(--tx-text);
+                border-radius: var(--tx-radius-md); font-family: var(--tx-font);
+            }
+            :root .tx-brk-btn { font-weight: 700; font-size: 12px; padding: 6px 12px; }
+            :root .tx-brk-btn:hover, :root .tx-goalp-step:hover, :root .tx-goalp-chip:hover, :root .tx-dialect-btn:hover {
+                background: var(--tx-surface-2); border-color: rgba(var(--tx-accent), 0.65); color: #fff; transform: none;
+            }
+            :root .tx-brk-chips .tx-brk-btn:hover { border-color: rgba(var(--tx-warn), 0.7); }
+            :root .tx-brk-btn.tx-brk-primary { background: rgba(var(--tx-ok), 0.13); border-color: rgba(var(--tx-ok), 0.5); color: #bbf7d0; }
+            :root .tx-brk-btn.tx-brk-primary:hover { background: rgba(var(--tx-ok), 0.24); border-color: rgba(var(--tx-ok), 0.85); box-shadow: 0 0 10px rgba(var(--tx-ok), 0.35); }
+            :root .tx-goalp-chip.active, :root .tx-dialect-btn.keyboard-focused { background: rgba(var(--tx-accent), 0.2); border-color: rgba(var(--tx-accent), 0.6); color: #ccfbf1; }
+            :root .tx-dialect-btn.selected { background: rgba(var(--tx-ok), 0.16); border-color: rgba(var(--tx-ok), 0.6); color: #bbf7d0; }
+            :root .tx-brk-pill, :root .tx-brk-suggest { background: var(--tx-surface-0); border-radius: var(--tx-radius-lg); }
+            :root .tx-brk-d-title { color: #fde68a; }
+            :root .tx-goalp-emoji {
+                display: grid; place-items: center; width: 52px; height: 52px; margin: 0 auto 10px; font-size: 26px; filter: none;
+                border-radius: 50%; background: rgba(var(--tx-accent), 0.14); border: 1px solid rgba(var(--tx-accent), 0.5); color: #99f6e4;
+            }
+            :root .tx-goalp-emoji .tx-emo { margin: 0; }
+            :root .tx-goalp-box .tx-confirm-actions { justify-content: center; }
+
+            /* مركز التاسكات: العناصر اللي كانت بنفسجي صلب بقت بنفس شكل tones النظام */
+            :root .tx-tc-num { background: rgba(var(--tx-accent), 0.18); color: #ccfbf1; box-shadow: inset 0 0 0 1px rgba(var(--tx-accent), 0.6); }
+            :root .tx-tc-num.done { background: rgba(var(--tx-info), 0.18); color: #bfdbfe; box-shadow: inset 0 0 0 1px rgba(var(--tx-info), 0.6); }
+            :root .tx-tc-mini.primary, :root .tx-tc-undo button {
+                background: rgba(var(--tx-accent), 0.14); border: 1px solid rgba(var(--tx-accent), 0.5); color: #ccfbf1; box-shadow: none; filter: none;
+            }
+            :root .tx-tc-mini.primary:hover, :root .tx-tc-undo button:hover { background: rgba(var(--tx-accent), 0.24); box-shadow: 0 0 10px rgba(var(--tx-accent), 0.35); filter: none; }
+            :root .tx-tc-top { background: rgba(var(--tx-accent), 0.2); border: 1px solid rgba(var(--tx-accent), 0.6); color: #ccfbf1; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+            :root #tx-tc-pill, :root .tx-tc-undo { background: var(--tx-surface-0); border-radius: var(--tx-radius-lg); font-family: var(--tx-font); }
+            :root .tx-tc-menu { background: var(--tx-surface-0); border: 1px solid var(--tx-border-strong); border-radius: var(--tx-radius-md); box-shadow: var(--tx-shadow-pop); }
+            :root .tx-tc-menuitem { color: var(--tx-text); font-family: var(--tx-font); }
+            :root .tx-tc-menuitem:hover { background: rgba(var(--tx-accent), 0.16); color: #ccfbf1; }
+            :root .tx-tc-filter { background: rgba(10,13,20,0.92); border-bottom: 1px solid var(--tx-border); }
+            :root .tx-tc-fbtn, :root .tx-tc-mini { font-family: var(--tx-font); }
+            :root .tx-panel-btn.tx-tc-morebtn { background: var(--tx-surface-1); border: 1px solid var(--tx-border); font-size: 16px; line-height: 1; padding: 4px 12px; }
+            :root .tx-panel-btn.tx-tc-morebtn:hover { background: var(--tx-surface-2); border-color: rgba(var(--tx-accent), 0.65); }
+            :root .tx-diff-jump-btn { font-family: var(--tx-font); }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function ensurePopupSystem() {
+        try {
+            ensureDesignSystemStyles();
+            ensurePopupSystemStyles();
+            txStartPopupIconizer();
+        } catch (e) { console.warn('[TX] popup system:', e); }
+    }
+
+    // ==================== (v29.31.0) أزرار قائمة Transcription Tools - نفس نظام التصميم (tx-ds-*) ====================
+    // كل زرار: أيقونة SVG + اسم + (عدّاد اختياري) + (نقطة اختيارية). اللون بيتحدد بالـtone: primary(تركواز: نسخ/لصق) / ok(أخضر: إنهاء) /
+    // info(أزرق: إحصائيات) / review(بنفسجي: فحص ومراجعة) / warn(عنبري: استرجاع) / danger(أحمر: خطر) / فاضي(رمادي: تراجع/إعادة).
+    // بدل ما كل دالة تكتب btn.textContent بإيموجي (كان بيمسح الأيقونة) بقت بتنادي الدوال دي، والحالات (جاري.. / تمّ ✓) بتتحط وتتشال من غير ما الشكل يتبوّظ.
+    let txMenuOpen = false;
+
+    function txInitToolBtn(btn, key, icon, label, tone) {
+        btn.className = 'tx-tool-btn tx-ds-btn' + (tone ? ' is-' + tone : '');
+        btn.type = 'button';
+        btn.dataset.txTool = '1';
+        btn.dataset.txKey = key;
+        btn.dataset.txIcon = icon;
+        btn.dataset.txLabel = label;
+        btn.innerHTML = '<span class="tx-b-ico"></span><span class="tx-b-label"></span><span class="tx-b-count" hidden></span><span class="tx-b-dot" hidden></span>';
+        btn.querySelector('.tx-b-ico').innerHTML = txIcon(icon);
+        btn.querySelector('.tx-b-label').textContent = label;
+        return btn;
+    }
+
+    function txBtnSetFace(btn, icon, label) {
+        if (!btn) return;
+        const ico = btn.querySelector('.tx-b-ico');
+        const lab = btn.querySelector('.tx-b-label');
+        if (ico) ico.innerHTML = txIcon(icon);
+        if (lab) lab.textContent = label;
+    }
+
+    function txBtnReset(btn) {
+        if (!btn) return;
+        clearTimeout(btn._txDoneT);
+        btn.classList.remove('is-busy', 'is-done');
+        txBtnSetFace(btn, btn.dataset.txIcon || 'menu', btn.dataset.txLabel || '');
+    }
+
+    function txBtnBusy(btn, label) {
+        if (!btn) return;
+        clearTimeout(btn._txDoneT);
+        btn.classList.remove('is-done');
+        btn.classList.add('is-busy');
+        txBtnSetFace(btn, 'loader', label);
+    }
+
+    // تأكيد النجاح على الزرار نفسه لمدة ثانية (✓ + نص) وبعدها يرجع لشكله
+    function txBtnSuccess(btn, label, ms) {
+        if (!btn) return;
+        clearTimeout(btn._txDoneT);
+        btn.classList.remove('is-busy');
+        btn.classList.add('is-done');
+        txBtnSetFace(btn, 'check', label);
+        btn._txDoneT = setTimeout(() => txBtnReset(btn), ms || 1000);
+    }
+
+    function txBtnCount(btn, n) {
+        if (!btn) return;
+        const c = btn.querySelector('.tx-b-count');
+        if (!c) return;
+        c.textContent = n > 99 ? '99+' : String(n);
+        c.hidden = !(n > 0);
+    }
+
+    function txBtnDot(btn, on, title) {
+        if (!btn) return;
+        const d = btn.querySelector('.tx-b-dot');
+        if (!d) return;
+        d.hidden = !on;
+        if (title) btn.title = on ? title : '';
+        else if (!on) btn.title = '';
+    }
+
+    // لو القايمة مفتوحة والزرار ظاهر: التأكيد على الزرار نفسه (من غير توست). لو القايمة مقفولة (اختصار كيبورد مثلاً) أو فيه خطأ: توست عادي.
+    function txToolFeedback(btn, btnLabel, toastText, isError) {
+        if (!isError && btn && txMenuOpen && btn.offsetParent !== null) {
+            txBtnSuccess(btn, btnLabel, 1000);
+            btn.title = toastText;
+        } else {
+            showToast(toastText, !!isError);
+        }
+    }
+
+    // ==================== 🧰 أدوات سريعة - قايمة مدمجة (v28.17) ← إعادة تصميم كاملة (v29.30.0) ====================
+    // الجديد: (1) مجموعات بعناوين (الكتابة / الاحتفال / العرض) (2) كارت الشيفت والبريك فوق مع الحالة والوقت لايف
+    // (3) سويتشات حقيقية بدل علامة ✓/✕ (4) segmented control لمستوى الاحتفال والتباين (5) أيقونات SVG موحّدة
+    // (6) "؟" صغيرة في الهيدر بدل صف كامل (7) نقطة حالة على الزرار الرئيسي لما فيه شيفت/بريك شغّال
+    // (8) كيبورد: Tab/Enter/Space + ESC، وموضع القايمة بيتظبط عشان متخرجش برّا الشاشة (9) بتحترم prefers-reduced-motion.
+    // التايمر (⏱️) لسه لوحده برّة زي ما هو. أسماء الـclasses (tx-qt-widget / tx-qt-menu / tx-qt-menu-open) فضلت زي ما هي.
     function ensureQuickToolsStyles() {
+        ensureDesignSystemStyles();
         if (document.getElementById('tx-qt-style')) return;
         const style = document.createElement('style');
         style.id = 'tx-qt-style';
         style.textContent = `
-            @keyframes tx-qt-breathe {
-                0%, 100% { box-shadow: 0 3px 10px rgba(0,0,0,0.3), 0 0 8px rgba(45,212,191,0.14); }
-                50% { box-shadow: 0 3px 10px rgba(0,0,0,0.3), 0 0 14px rgba(45,212,191,0.4); }
+            @keyframes tx-qt-dot-pulse {
+                0%, 100% { opacity: 1; transform: scale(1); }
+                50% { opacity: 0.55; transform: scale(0.8); }
             }
+            /* (v29.30.2) حركة الزرار متطابقة مع التايمر بالحرف: نفس المسافة (6px) ونفس المدة والإيزينج ونفس ظل الهوفر،
+               ومفيش أي animation شغّال على الزرار (الوميض التنفسي القديم كان بيعيد رسم الـblur كل فريم فبيبوّظ نعومة الحركة) */
             .tx-qt-widget {
                 position: fixed; top: 516px; left: 6px; z-index: 99996;
                 display: flex; align-items: center; gap: 7px;
-                background: rgba(14,20,20,0.55);
-                border: 1px solid rgba(45,212,191,0.28);
+                background: rgba(14,20,20,0.6);
+                border: 1px solid rgba(var(--tx-accent),0.45);
                 border-radius: 22px;
                 padding: 6px 12px 6px 8px;
                 backdrop-filter: blur(10px) saturate(160%);
                 -webkit-backdrop-filter: blur(10px) saturate(160%);
                 color: #99f6e4; font-weight: 800; font-size: 12.5px;
-                font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+                font-family: var(--tx-font);
                 cursor: pointer; user-select: none;
-                animation: tx-qt-breathe 2.6s ease-in-out infinite;
-                transform: translateX(-14px);
-                transition: transform 0.32s cubic-bezier(0.4,0,0.2,1), box-shadow 0.25s ease, border-color 0.25s ease;
+                box-shadow: 0 3px 10px rgba(0,0,0,0.3), 0 0 8px rgba(var(--tx-accent),0.22);
+                transform: translateX(-6px);
+                transition: transform 0.32s cubic-bezier(0.4,0,0.2,1), box-shadow 0.3s ease, border-color 0.3s ease;
             }
+            /* منطقة هوفر أوسع شوية من الزرار نفسه عشان الماوس على الحافة ميعملش رعشة ظاهر/مستخبّي */
+            .tx-qt-widget::before { content: ''; position: absolute; top: -8px; bottom: -8px; left: -10px; right: -10px; }
             .tx-qt-widget:hover, .tx-qt-widget.tx-qt-open {
                 transform: translateX(0);
-                animation-play-state: paused;
-                box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 16px rgba(45,212,191,0.5);
-                border-color: rgba(45,212,191,0.6);
+                box-shadow: 0 4px 14px rgba(0,0,0,0.35), 0 0 16px rgba(var(--tx-accent),0.4);
+                border-color: rgba(var(--tx-accent),0.75);
             }
+            .tx-qt-widget:focus-visible { outline: 2px solid rgba(var(--tx-accent),0.85); outline-offset: 2px; transform: translateX(0); }
             .tx-qt-widget .tx-qt-toggle-icon {
                 display: flex; align-items: center; justify-content: center;
-                width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
-                background: rgba(45,212,191,0.16); border: 1px solid rgba(45,212,191,0.5);
-                font-size: 12px; font-weight: 900;
+                width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+                background: rgba(var(--tx-accent),0.16); border: 1px solid rgba(var(--tx-accent),0.5);
             }
+            .tx-qt-widget .tx-qt-toggle-icon .tx-ds-icon { width: 12px; height: 12px; }
+
+            /* نقطة الحالة: أخضر = شيفت شغّال، عنبري نابض = بريك. مخفية لو مفيش حاجة شغّالة */
+            .tx-qt-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: rgba(148,163,184,0.6); }
+            /* على الزرار الرئيسي النقطة badge مطلق في الركن: ظهورها/اختفاؤها مبيغيّرش عرض الزرار (كان بيعمل نطّة) */
+            .tx-qt-widget > .tx-qt-dot { position: absolute; top: -2px; right: -2px; border: 1.5px solid rgba(14,20,20,0.9); box-sizing: content-box; transition: opacity 0.25s ease, transform 0.25s ease; }
+            [data-state="shift"] > .tx-qt-dot, [data-state="shift"] .tx-qt-card-head > .tx-qt-dot {
+                background: rgb(var(--tx-ok)); box-shadow: 0 0 8px rgba(var(--tx-ok),0.85);
+            }
+            [data-state="break"] > .tx-qt-dot, [data-state="break"] .tx-qt-card-head > .tx-qt-dot {
+                background: rgb(var(--tx-warn)); box-shadow: 0 0 8px rgba(var(--tx-warn),0.85);
+                animation: tx-qt-dot-pulse 1.4s ease-in-out infinite;
+            }
+            .tx-qt-widget[data-state="idle"] > .tx-qt-dot { opacity: 0; transform: scale(0.4); }
+
             .tx-qt-menu {
                 position: fixed; top: 516px; left: 172px; z-index: 99996;
-                display: none; flex-direction: column; gap: 6px;
-                background: rgba(10,13,20,0.85);
-                border: 1px solid rgba(45,212,191,0.3);
-                border-radius: 14px;
-                padding: 7px;
-                backdrop-filter: blur(12px) saturate(160%);
-                -webkit-backdrop-filter: blur(12px) saturate(160%);
-                box-shadow: 0 8px 24px rgba(0,0,0,0.45);
-                min-width: 190px;
+                display: flex; flex-direction: column; gap: 5px;
+                width: 252px; max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain;
+                direction: rtl; box-sizing: border-box;
+                background: var(--tx-surface-0);
+                border: 1px solid rgba(var(--tx-accent),0.3);
+                border-radius: var(--tx-radius-lg);
+                padding: 8px;
+                backdrop-filter: blur(14px) saturate(160%);
+                -webkit-backdrop-filter: blur(14px) saturate(160%);
+                box-shadow: var(--tx-shadow-pop);
+                font-family: var(--tx-font); color: var(--tx-text);
+                opacity: 0; visibility: hidden; pointer-events: none;
+                transform: translateX(-6px) scale(0.97); transform-origin: left top;
+                transition: opacity 0.16s var(--tx-ease), transform 0.16s var(--tx-ease), visibility 0s linear 0.16s;
+                scrollbar-width: thin; scrollbar-color: rgba(148,163,184,0.35) transparent;
             }
-            .tx-qt-menu.tx-qt-menu-open { display: flex; }
-            .tx-qt-item {
-                display: flex; align-items: center; gap: 8px;
-                padding: 7px 10px; border-radius: 10px;
-                background: rgba(255,255,255,0.04);
-                border: 1px solid rgba(148,163,184,0.25);
-                color: #cbd5e1; font-weight: 700; font-size: 12.5px;
-                font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
-                cursor: pointer; user-select: none;
-                transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, color 0.15s ease;
+            .tx-qt-menu.tx-qt-menu-open {
+                opacity: 1; visibility: visible; pointer-events: auto; transform: none;
+                transition: opacity 0.16s var(--tx-ease), transform 0.16s var(--tx-ease), visibility 0s;
             }
-            /* (v28.31) هافر واضح: الصف يلمع بحدود وتوهج تركوازي عشان تبان إنك واقف عليه (حتى لو الخيار متوقف) */
-            .tx-qt-item:hover {
-                background: rgba(45,212,191,0.18);
-                border-color: rgba(45,212,191,0.75);
-                color: #f0fdfa;
-                box-shadow: 0 0 10px rgba(45,212,191,0.45), inset 0 0 8px rgba(45,212,191,0.12);
-                transform: translateX(-2px);
+            .tx-qt-head { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 2px; }
+            .tx-qt-head-title { font: 800 12.5px var(--tx-font); color: #99f6e4; }
+            .tx-qt-help {
+                display: grid; place-items: center; width: 24px; height: 24px; padding: 0; cursor: pointer;
+                background: transparent; border: 1px solid transparent; border-radius: 50%; color: var(--tx-text-dim);
+                transition: background 0.15s var(--tx-ease), color 0.15s var(--tx-ease), border-color 0.15s var(--tx-ease);
             }
-            .tx-qt-item:hover .tx-qt-icon {
-                background: rgba(45,212,191,0.22); border-color: rgba(45,212,191,0.8); color: #ccfbf1;
+            .tx-qt-help:hover { background: rgba(var(--tx-accent),0.16); border-color: rgba(var(--tx-accent),0.55); color: #ccfbf1; }
+            .tx-qt-help:focus-visible { outline: 2px solid rgba(var(--tx-accent),0.85); outline-offset: 1px; }
+
+            /* كارت الشيفت والبريك */
+            .tx-qt-card {
+                display: flex; flex-direction: column; gap: 7px; padding: 8px;
+                background: var(--tx-surface-1); border: 1px solid var(--tx-border); border-radius: var(--tx-radius-md);
+                transition: border-color 0.2s var(--tx-ease), background 0.2s var(--tx-ease);
             }
-            .tx-qt-item.tx-qt-on:hover {
-                background: rgba(74,222,128,0.18);
-                border-color: rgba(74,222,128,0.85);
-                box-shadow: 0 0 10px rgba(74,222,128,0.45), inset 0 0 8px rgba(74,222,128,0.12);
+            .tx-qt-card[data-state="shift"] { border-color: rgba(var(--tx-ok),0.45); background: rgba(var(--tx-ok),0.06); }
+            .tx-qt-card[data-state="break"] { border-color: rgba(var(--tx-warn),0.5); background: rgba(var(--tx-warn),0.07); }
+            .tx-qt-card-head { display: flex; align-items: center; gap: 7px; font: 700 12px var(--tx-font); }
+            .tx-qt-card-title { flex: 1; }
+            .tx-qt-card-time { font-variant-numeric: tabular-nums; color: var(--tx-text-dim); font-weight: 700; }
+            .tx-qt-card[data-state="shift"] .tx-qt-card-time { color: #bbf7d0; }
+            .tx-qt-card[data-state="break"] .tx-qt-card-time { color: #fde68a; }
+            .tx-qt-card-actions { display: flex; gap: 6px; }
+            .tx-qt-card-actions .tx-ds-btn { flex: 1 1 auto; min-width: 0; padding: 6px 7px; }
+            .tx-qt-card-actions .tx-ds-btn .tx-ds-icon { width: 14px; height: 14px; }
+
+            /* صف سويتش + حقل segmented */
+            .tx-qt-row, .tx-qt-field {
+                display: flex; align-items: center; gap: 9px;
+                padding: 7px 9px; border-radius: var(--tx-radius-md);
+                background: var(--tx-surface-1); border: 1px solid transparent;
+                color: var(--tx-text); font: 700 12.5px var(--tx-font);
+                user-select: none; box-sizing: border-box;
+                transition: background 0.15s var(--tx-ease), border-color 0.15s var(--tx-ease);
             }
-            .tx-qt-item:active { transform: translateX(-2px) scale(0.98); }
-            .tx-qt-item.tx-qt-on {
-                border-color: rgba(74,222,128,0.5); color: #bbf7d0;
-            }
-            .tx-qt-icon {
-                display: flex; align-items: center; justify-content: center;
-                width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
-                background: rgba(148,163,184,0.14); border: 1px solid rgba(148,163,184,0.4);
-                font-size: 11px; font-weight: 900;
-            }
-            .tx-qt-item.tx-qt-on .tx-qt-icon {
-                background: rgba(74,222,128,0.16); border-color: rgba(74,222,128,0.5);
+            .tx-qt-row { cursor: pointer; }
+            .tx-qt-row:hover { background: var(--tx-surface-2); border-color: rgba(var(--tx-accent),0.55); }
+            .tx-qt-row:active { transform: scale(0.985); }
+            .tx-qt-row:focus-visible { outline: 2px solid rgba(var(--tx-accent),0.85); outline-offset: 1px; }
+            .tx-qt-field { flex-direction: column; align-items: stretch; gap: 7px; }
+            .tx-qt-field-head { display: flex; align-items: center; gap: 9px; }
+            .tx-qt-ico { display: grid; place-items: center; width: 20px; height: 20px; flex-shrink: 0; color: var(--tx-text-dim); transition: color 0.15s var(--tx-ease); }
+            .tx-qt-row.tx-qt-on .tx-qt-ico { color: rgb(var(--tx-ok)); }
+            .tx-qt-field.tx-qt-on .tx-qt-ico { color: rgb(var(--tx-accent)); }
+            .tx-qt-label { flex: 1; }
+
+            @media (prefers-reduced-motion: reduce) {
+                .tx-qt-widget, .tx-qt-menu, .tx-qt-row, .tx-qt-field, .tx-qt-card, .tx-qt-ico, .tx-qt-help { transition: none; }
+                [data-state="break"] > .tx-qt-dot, [data-state="break"] .tx-qt-card-head > .tx-qt-dot { animation: none; }
             }
         `;
         document.head.appendChild(style);
+    }
+
+    let qtTickTimer = null;          // تحديث لايف لكارت الشيفت/البريك طول ما القايمة مفتوحة
+    let qtShiftCardRef = null;
+
+    function positionQuickToolsMenu() {
+        const btn = document.getElementById('tx-qt-btn');
+        const menu = document.getElementById('tx-qt-menu');
+        if (!btn || !menu) return;
+        // offsetLeft/offsetWidth مش بيتأثروا بالـtransform بتاع الزرار (translateX) فالمكان ثابت
+        menu.style.left = (btn.offsetLeft + btn.offsetWidth + 8) + 'px';
+        const maxTop = Math.max(8, window.innerHeight - menu.offsetHeight - 8);
+        menu.style.top = Math.max(8, Math.min(btn.offsetTop, maxTop)) + 'px';
+    }
+
+    function openQuickToolsMenu() {
+        const menu = document.getElementById('tx-qt-menu');
+        const btn = document.getElementById('tx-qt-btn');
+        if (!menu || !btn) return;
+        qtRefreshShiftCard();
+        positionQuickToolsMenu();
+        menu.classList.add('tx-qt-menu-open');
+        btn.classList.add('tx-qt-open');
+        btn.setAttribute('aria-expanded', 'true');
+        if (btn.title) { btn.dataset.tip = btn.title; btn.removeAttribute('title'); }
+        clearInterval(qtTickTimer);
+        qtTickTimer = setInterval(qtRefreshShiftCard, 1000);
     }
 
     function closeQuickToolsMenu() {
         const menu = document.getElementById('tx-qt-menu');
         const btn = document.getElementById('tx-qt-btn');
         if (menu) menu.classList.remove('tx-qt-menu-open');
-        if (btn) btn.classList.remove('tx-qt-open');
+        if (btn) {
+            btn.classList.remove('tx-qt-open'); btn.setAttribute('aria-expanded', 'false');
+            if (btn.dataset.tip) { btn.title = btn.dataset.tip; delete btn.dataset.tip; }
+        }
+        clearInterval(qtTickTimer);
+        qtTickTimer = null;
+    }
+
+    // ---------- مكوّنات القايمة ----------
+    function qtActivateOnKey(el, handler) {
+        el.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault(); e.stopPropagation();
+            handler();
+        });
+    }
+
+    function qtBuildSwitchRow(iconName, label, onActivate) {
+        const row = document.createElement('div');
+        row.className = 'tx-qt-row';
+        row.setAttribute('role', 'switch');
+        row.setAttribute('aria-checked', 'false');
+        row.tabIndex = 0;
+        row.innerHTML = '<span class="tx-qt-ico">' + txIcon(iconName) + '</span><span class="tx-qt-label"></span><span class="tx-ds-switch" aria-hidden="true"><i></i></span>';
+        row.querySelector('.tx-qt-label').textContent = label;
+        row.addEventListener('click', (e) => { e.stopPropagation(); onActivate(); });
+        qtActivateOnKey(row, onActivate);
+        return row;
+    }
+
+    function qtBuildSegField(iconName, label, options, onPick) {
+        const field = document.createElement('div');
+        field.className = 'tx-qt-field';
+        const head = document.createElement('div');
+        head.className = 'tx-qt-field-head';
+        head.innerHTML = '<span class="tx-qt-ico">' + txIcon(iconName) + '</span><span class="tx-qt-label"></span>';
+        head.querySelector('.tx-qt-label').textContent = label;
+        const seg = document.createElement('div');
+        seg.className = 'tx-ds-seg';
+        seg.setAttribute('role', 'radiogroup');
+        seg.setAttribute('aria-label', label);
+        options.forEach((opt) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.setAttribute('role', 'radio');
+            b.setAttribute('aria-checked', 'false');
+            b.dataset.v = opt.value;
+            b.textContent = opt.name;
+            b.addEventListener('click', (e) => { e.stopPropagation(); onPick(opt.value); });
+            seg.appendChild(b);
+        });
+        field.appendChild(head);
+        field.appendChild(seg);
+        return field;
+    }
+
+    // (v29.30.1) مفيش title/tooltip جوه القايمة (كانت بتغطي على المحتوى) - الباراميتر موجود للتوافق بس بيتتجاهل.
+    // الاستثناء الوحيد: زرار "؟" في الهيدر محتفظ بـtooltip بتاعه.
+    function qtSetSwitchRow(row, on) {
+        if (!row) return;
+        row.setAttribute('aria-checked', on ? 'true' : 'false');
+        row.classList.toggle('tx-qt-on', !!on);
+    }
+
+    function qtSetSegmentActive(field, value) {
+        if (!field) return;
+        field.querySelectorAll('.tx-ds-seg button').forEach((b) => {
+            const on = b.dataset.v === value;
+            b.setAttribute('aria-checked', on ? 'true' : 'false');
+            b.tabIndex = on ? 0 : -1;
+        });
+    }
+
+    function qtBuildShiftCard() {
+        const card = document.createElement('div');
+        card.className = 'tx-qt-card';
+        card.dataset.state = 'idle';
+        card.innerHTML = '<div class="tx-qt-card-head"><span class="tx-qt-dot"></span><span class="tx-qt-card-title"></span><span class="tx-qt-card-time"></span></div><div class="tx-qt-card-actions"></div>';
+
+        const mkBtn = () => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'tx-ds-btn';
+            b.innerHTML = '<span class="tx-qt-bico"></span><span class="tx-qt-blabel"></span>';
+            return b;
+        };
+        const shiftBtn = mkBtn();
+        shiftBtn.addEventListener('click', (e) => { e.stopPropagation(); closeQuickToolsMenu(); toggleShift(); });
+        const breakBtn = mkBtn();
+        breakBtn.addEventListener('click', (e) => { e.stopPropagation(); closeQuickToolsMenu(); toggleBreak(); });
+
+        const actions = card.querySelector('.tx-qt-card-actions');
+        actions.appendChild(shiftBtn);
+        actions.appendChild(breakBtn);
+
+        shiftRowRef = shiftBtn;   // نفس المتغيرات القديمة، عشان باقي الكود (تيك الشيفت/البريك) يفضل شغّال زي ما هو
+        breakRowRef = breakBtn;
+        qtShiftCardRef = card;
+        return card;
+    }
+
+    // بتحدّث كارت الشيفت/البريك + نقطة الحالة على الزرار الرئيسي (بتتنادى من updateBreakShiftRows ومن تيك القايمة)
+    function qtRefreshShiftCard() {
+        const card = qtShiftCardRef;
+        const mainBtn = document.getElementById('tx-qt-btn');
+        if (!card) return;
+        const now = Date.now();
+        let state = 'idle', title = 'مفيش شيفت شغال', time = '';
+        if (breakState) {
+            state = 'break';
+            const remaining = breakState.end - now;
+            title = 'في بريك';
+            time = remaining > 0 ? fmtClock(remaining) : 'زيادة';
+        } else if (shiftState) {
+            state = 'shift';
+            title = 'الشيفت شغال';
+            time = 'صافي ' + fmtDurAr(shiftNetMs(now));
+        }
+        card.dataset.state = state;
+        if (mainBtn) mainBtn.dataset.state = state;
+        card.querySelector('.tx-qt-card-title').textContent = title;
+        card.querySelector('.tx-qt-card-time').textContent = time;
+
+        const setBtn = (btn, iconName, label, variant, kbd) => {
+            const sig = iconName + '|' + label + '|' + variant;
+            if (btn.dataset.sig === sig) return;
+            btn.dataset.sig = sig;
+            btn.className = 'tx-ds-btn' + (variant ? ' ' + variant : '');
+            btn.querySelector('.tx-qt-bico').innerHTML = txIcon(iconName, 14);
+            const lb = btn.querySelector('.tx-qt-blabel');
+            lb.textContent = label;
+            if (kbd) { const k = document.createElement('span'); k.className = 'tx-ds-kbd'; k.textContent = kbd; lb.appendChild(document.createTextNode(' ')); lb.appendChild(k); }
+        };
+        if (shiftRowRef) {
+            if (shiftState) { setBtn(shiftRowRef, 'flag', 'إنهاء الشيفت', 'is-danger'); }
+            else { setBtn(shiftRowRef, 'clock', 'بدء الشيفت', 'is-primary'); }
+        }
+        if (breakRowRef) {
+            if (breakState) { setBtn(breakRowRef, 'stop', 'إنهاء البريك', 'is-warn'); }
+            else { setBtn(breakRowRef, 'coffee', 'بريك', '', 'Alt+B'); }
+        }
     }
 
     function addQuickToolsWidget() {
         ensureQuickToolsStyles();
-        initContrastModeState(); // (v28.17) نفس منطق تحميل تفضيل التباين من قبل، بس من غير ودجت مستقل
-        initCelebrationSoundState(); // (v28.23) تحميل تفضيل صوت الاحتفال (شغال افتراضياً)
-        initCelebrationLevelState(); // (v28.26) تحميل مستوى الاحتفال المحفوظ
+        initContrastModeState();        // (v28.17) تحميل تفضيل التباين
+        initCelebrationSoundState();    // (v28.23) تحميل تفضيل صوت الاحتفال (شغال افتراضياً)
+        initCelebrationLevelState();    // (v28.26) تحميل مستوى الاحتفال المحفوظ
 
+        // ---------- الزرار الرئيسي ----------
         const btn = document.createElement('div');
         btn.id = 'tx-qt-btn';
         btn.className = 'tx-qt-widget';
-        btn.title = 'Quick Tools (بريك / شيفت / إصلاح تلقائي / مساعدة / تباين مريح)';
+        btn.dataset.state = 'idle';
+        btn.tabIndex = 0;
+        btn.setAttribute('role', 'button');
+        btn.setAttribute('aria-haspopup', 'true');
+        btn.setAttribute('aria-expanded', 'false');
+        btn.title = 'Quick Tools (شيفت / بريك / إصلاح تلقائي / احتفال / راحة العين / مساعدة)';
+        btn.innerHTML = '<span class="tx-qt-toggle-icon">' + txIcon('menu', 12) + '</span><span class="tx-qt-btn-label">Quick Tools</span><span class="tx-qt-dot"></span>';
 
-        const btnIcon = document.createElement('span');
-        btnIcon.className = 'tx-qt-toggle-icon';
-        btnIcon.textContent = '☰';
-        const btnLabel = document.createElement('span');
-        btnLabel.textContent = 'Quick Tools';
-        btn.appendChild(btnIcon);
-        btn.appendChild(btnLabel);
-
+        // ---------- القايمة ----------
         const menu = document.createElement('div');
         menu.id = 'tx-qt-menu';
         menu.className = 'tx-qt-menu';
+        menu.setAttribute('role', 'menu');
 
-        // الصف الأول: إصلاح تلقائي أثناء الكتابة
-        const autoFixRow = document.createElement('div');
-        autoFixRow.className = 'tx-qt-item';
-        autoFixRow.innerHTML = '<span class="tx-qt-icon"></span><span class="tx-qt-label"></span>';
-        autoFixRow.onclick = (e) => { e.stopPropagation(); toggleLiveAutoFix(); };
+        const head = document.createElement('div');
+        head.className = 'tx-qt-head';
+        head.innerHTML = '<span class="tx-qt-head-title">أدوات سريعة</span>';
+        const helpBtn = document.createElement('button');
+        helpBtn.type = 'button';
+        helpBtn.className = 'tx-qt-help';
+        helpBtn.title = 'مساعدة';
+        helpBtn.setAttribute('aria-label', 'مساعدة');
+        helpBtn.innerHTML = txIcon('help', 15);
+        helpBtn.addEventListener('click', (e) => { e.stopPropagation(); closeQuickToolsMenu(); showHelpCenter(); });
+        head.appendChild(helpBtn);
+
+        const groupTitle = (text) => {
+            const g = document.createElement('div');
+            g.className = 'tx-ds-group-title';
+            g.textContent = text;
+            return g;
+        };
+
+        // الكتابة
+        const autoFixRow = qtBuildSwitchRow('wand', 'إصلاح تلقائي', toggleLiveAutoFix);
         liveAutoFixToggleBtnRef = autoFixRow;
-
-        // (v29.26.5) الصف اللي تحت الإصلاح التلقائي: لصق بالكليك جوه السيجمنت الفاضي (شغال/متوقف)
-        const clickPasteRow = document.createElement('div');
-        clickPasteRow.className = 'tx-qt-item';
-        clickPasteRow.innerHTML = '<span class="tx-qt-icon"></span><span class="tx-qt-label"></span>';
-        clickPasteRow.onclick = (e) => { e.stopPropagation(); toggleClickPaste(); };
+        const clickPasteRow = qtBuildSwitchRow('click', 'لصق بالكليك', toggleClickPaste);
         clickPasteToggleBtnRef = clickPasteRow;
 
-        // الصف التاني: مساعدة (بيقفل القايمة ويفتح مركز المساعدة على طول)
-        const helpRow = document.createElement('div');
-        helpRow.className = 'tx-qt-item';
-        helpRow.innerHTML = '<span class="tx-qt-icon">؟</span><span class="tx-qt-label">مساعدة</span>';
-        helpRow.onclick = (e) => { e.stopPropagation(); closeQuickToolsMenu(); showHelpCenter(); };
-
-        // الصف التالت: تباين مريح
-        const contrastRow = document.createElement('div');
-        contrastRow.className = 'tx-qt-item';
-        contrastRow.innerHTML = '<span class="tx-qt-icon"></span><span class="tx-qt-label"></span>';
-        contrastRow.onclick = (e) => { e.stopPropagation(); toggleContrastMode(); };
-        contrastToggleBtnRef = contrastRow;
-
-        // الصف الرابع: صوت الاحتفال (v28.23)
-        const soundRow = document.createElement('div');
-        soundRow.className = 'tx-qt-item';
-        soundRow.innerHTML = '<span class="tx-qt-icon"></span><span class="tx-qt-label"></span>';
-        soundRow.onclick = (e) => { e.stopPropagation(); toggleCelebrationSound(); };
+        // الاحتفال
+        const levelField = qtBuildSegField('star', 'مستوى الاحتفال',
+            CELEBRATION_LEVELS.map((k) => ({ value: k, name: CELEBRATION_LEVEL_META[k].name })), setCelebrationLevel);
+        levelToggleBtnRef = levelField;
+        const soundRow = qtBuildSwitchRow('volume', 'صوت الاحتفال', toggleCelebrationSound);
         soundToggleBtnRef = soundRow;
 
-        // الصف الخامس: مستوى الاحتفال (بسيط / متوسط / كبير) - كل ضغطة بتبدّل للمستوى اللي بعده (v28.26)
-        const levelRow = document.createElement('div');
-        levelRow.className = 'tx-qt-item';
-        levelRow.innerHTML = '<span class="tx-qt-icon"></span><span class="tx-qt-label"></span>';
-        levelRow.onclick = (e) => { e.stopPropagation(); cycleCelebrationLevel(); };
-        levelToggleBtnRef = levelRow;
+        // العرض
+        const contrastField = qtBuildSegField('contrast', 'راحة العين',
+            CONTRAST_LEVELS.map((k) => ({ value: k, name: CONTRAST_LEVEL_META[k].name })), setContrastLevel);
+        contrastToggleBtnRef = contrastField;
 
-        // (v29.0) صف البريك (Alt+B) + صف الشيفت - فوق باقي الصفوف عشان توصلهم بسرعة
-        const breakRow = document.createElement('div');
-        breakRow.className = 'tx-qt-item';
-        breakRow.innerHTML = '<span class="tx-qt-icon">☕</span><span class="tx-qt-label">بريك (Alt+B)</span>';
-        breakRow.onclick = (e) => { e.stopPropagation(); closeQuickToolsMenu(); toggleBreak(); };
-        breakRowRef = breakRow;
-
-        const shiftRow = document.createElement('div');
-        shiftRow.className = 'tx-qt-item';
-        shiftRow.innerHTML = '<span class="tx-qt-icon">🕘</span><span class="tx-qt-label">بدء الشيفت</span>';
-        shiftRow.onclick = (e) => { e.stopPropagation(); closeQuickToolsMenu(); toggleShift(); };
-        shiftRowRef = shiftRow;
-
-        // الترتيب: إصلاح تلقائي ← الشيفت ← البريك ← مستوى الاحتفال ← صوت الاحتفال ← تباين مريح ← مساعدة
+        menu.appendChild(head);
+        menu.appendChild(qtBuildShiftCard());
+        menu.appendChild(groupTitle('الكتابة'));
         menu.appendChild(autoFixRow);
         menu.appendChild(clickPasteRow);
-        menu.appendChild(shiftRow);
-        menu.appendChild(breakRow);
-        menu.appendChild(levelRow);
+        menu.appendChild(groupTitle('الاحتفال'));
+        menu.appendChild(levelField);
         menu.appendChild(soundRow);
-        menu.appendChild(contrastRow);
-        menu.appendChild(helpRow);
+        menu.appendChild(groupTitle('العرض'));
+        menu.appendChild(contrastField);
 
-        btn.onclick = (e) => {
-            e.stopPropagation();
-            const isOpen = menu.classList.contains('tx-qt-menu-open');
-            if (isOpen) { closeQuickToolsMenu(); return; }
-            menu.classList.add('tx-qt-menu-open');
-            btn.classList.add('tx-qt-open');
+        const toggleMenu = () => {
+            if (menu.classList.contains('tx-qt-menu-open')) closeQuickToolsMenu();
+            else openQuickToolsMenu();
         };
+        btn.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
+        qtActivateOnKey(btn, toggleMenu);
 
         document.body.appendChild(btn);
         document.body.appendChild(menu);
@@ -10127,8 +10969,9 @@
             closeQuickToolsMenu();
         });
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && menu.classList.contains('tx-qt-menu-open')) closeQuickToolsMenu();
+            if (e.key === 'Escape' && menu.classList.contains('tx-qt-menu-open')) { closeQuickToolsMenu(); btn.focus(); }
         });
+        window.addEventListener('resize', () => { if (menu.classList.contains('tx-qt-menu-open')) positionQuickToolsMenu(); });
 
         updateLiveAutoFixToggleUI();
         updateClickPasteToggleUI();
@@ -10815,8 +11658,8 @@
         style.textContent = `
             @keyframes tx-brk-pop { from { opacity: 0; transform: translateX(-50%) translateY(14px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
             @keyframes tx-brk-pulse {
-                0%, 100% { box-shadow: 0 10px 28px rgba(0,0,0,0.45), 0 0 14px rgba(248,113,113,0.3); }
-                50% { box-shadow: 0 10px 28px rgba(0,0,0,0.45), 0 0 26px rgba(248,113,113,0.75); }
+                0%, 100% { box-shadow: 0 10px 28px rgba(0,0,0,0.45), 0 0 14px rgba(var(--tx-danger),0.3); }
+                50% { box-shadow: 0 10px 28px rgba(0,0,0,0.45), 0 0 26px rgba(var(--tx-danger),0.75); }
             }
             .tx-brk-pill, .tx-brk-suggest {
                 position: fixed; left: 50%; transform: translateX(-50%);
@@ -10831,10 +11674,10 @@
             }
             .tx-brk-pill {
                 bottom: 26px; color: #fde68a;
-                border: 1px solid rgba(251,191,36,0.5);
-                box-shadow: 0 10px 28px rgba(0,0,0,0.45), 0 0 18px rgba(251,191,36,0.18);
+                border: 1px solid rgba(var(--tx-warn),0.5);
+                box-shadow: 0 10px 28px rgba(0,0,0,0.45), 0 0 18px rgba(var(--tx-warn),0.18);
             }
-            .tx-brk-pill.tx-brk-over { border-color: rgba(248,113,113,0.7); color: #fecaca; animation: tx-brk-pulse 1s ease-in-out infinite; }
+            .tx-brk-pill.tx-brk-over { border-color: rgba(var(--tx-danger),0.7); color: #fecaca; animation: tx-brk-pulse 1s ease-in-out infinite; }
             .tx-brk-icon { font-size: 20px; flex-shrink: 0; }
             .tx-brk-label { font-size: 12.5px; font-weight: 700; }
             .tx-brk-time {
@@ -10850,16 +11693,16 @@
             }
             .tx-brk-btn:hover { background: rgba(255,255,255,0.18); }
             .tx-brk-btn.tx-brk-primary {
-                background: linear-gradient(135deg, rgba(16,185,129,0.7), rgba(5,150,105,0.55));
+                background: linear-gradient(135deg, rgba(var(--tx-ok),0.7), rgba(var(--tx-ok),0.55));
                 border-color: rgba(110,231,183,0.45);
             }
-            .tx-brk-btn.tx-brk-primary:hover { box-shadow: 0 0 14px rgba(16,185,129,0.45); }
+            .tx-brk-btn.tx-brk-primary:hover { box-shadow: 0 0 14px rgba(var(--tx-ok),0.45); }
 
             .tx-brk-suggest {
                 bottom: 96px; flex-direction: column; align-items: stretch; gap: 8px;
                 width: 380px; max-width: 92vw;
-                border: 1px solid rgba(45,212,191,0.45);
-                box-shadow: 0 12px 30px rgba(0,0,0,0.5), 0 0 22px rgba(45,212,191,0.16);
+                border: 1px solid rgba(var(--tx-accent),0.45);
+                box-shadow: 0 12px 30px rgba(0,0,0,0.5), 0 0 22px rgba(var(--tx-accent),0.16);
             }
             .tx-brk-suggest-title { color: #99f6e4; font-weight: 800; font-size: 14px; }
             .tx-brk-suggest-text { color: #cbd5e1; font-size: 12.5px; line-height: 1.7; }
@@ -10874,8 +11717,8 @@
                 border-radius: 10px; padding: 9px 12px; color: #fff; font-size: 18px; font-weight: 800;
                 font-family: inherit; text-align: center; direction: ltr; outline: none;
             }
-            .tx-brk-d-input:focus { border-color: rgba(251,191,36,0.7); box-shadow: 0 0 12px rgba(251,191,36,0.25); }
-            .tx-brk-d-input.tx-brk-bad { border-color: rgba(248,113,113,0.8); }
+            .tx-brk-d-input:focus { border-color: rgba(var(--tx-warn),0.7); box-shadow: 0 0 12px rgba(var(--tx-warn),0.25); }
+            .tx-brk-d-input.tx-brk-bad { border-color: rgba(var(--tx-danger),0.8); }
             .tx-brk-d-unit { color: #cbd5e1; font-size: 13px; font-weight: 700; }
             .tx-brk-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 18px; }
         `;
@@ -11386,57 +12229,43 @@
     // ---------- صفوف Quick Tools ----------
     function updateBreakShiftRows() {
         updateListBreakShiftButtons();
-        if (breakRowRef) {
-            const ic = breakRowRef.querySelector('.tx-qt-icon');
-            const lb = breakRowRef.querySelector('.tx-qt-label');
-            if (breakState) {
-                const remaining = breakState.end - Date.now();
-                if (ic) ic.textContent = '⏹';
-                if (lb) lb.textContent = 'إنهاء البريك (' + (remaining > 0 ? fmtClock(remaining) : 'زيادة') + ')';
-                breakRowRef.classList.add('tx-qt-on');
-            } else {
-                if (ic) ic.textContent = '☕';
-                if (lb) lb.textContent = 'بريك (Alt+B)';
-                breakRowRef.classList.remove('tx-qt-on');
-            }
-        }
-        if (shiftRowRef) {
-            const ic = shiftRowRef.querySelector('.tx-qt-icon');
-            const lb = shiftRowRef.querySelector('.tx-qt-label');
-            if (shiftState) {
-                if (ic) ic.textContent = '🏁';
-                if (lb) lb.textContent = 'إنهاء الشيفت (صافي ' + fmtDurAr(shiftNetMs(Date.now())) + ')';
-                shiftRowRef.classList.add('tx-qt-on');
-            } else {
-                if (ic) ic.textContent = '🕘';
-                if (lb) lb.textContent = 'بدء الشيفت';
-                shiftRowRef.classList.remove('tx-qt-on');
-            }
-        }
+        qtRefreshShiftCard();
     }
 
     // (v29.26.8) أزرار صفحة My Task: نفس حالة Quick Tools بالظبط (نفس breakState/shiftState)
     function updateListBreakShiftButtons() {
-        const setBtn = (btn, on, label, value) => {
+        // (v29.33.0) نفس mapping أزرار Quick Tools: شيفت = clock/primary ⇄ flag/danger ، بريك = coffee ⇄ stop/warn
+        const setBtn = (btn, base, on, iconName, tone, label, value, isKbd) => {
             if (!btn) return;
+            const sig = iconName + '|' + tone;
+            if (btn.dataset.sig !== sig) {
+                btn.dataset.sig = sig;
+                btn.className = 'tx-ds-btn ' + base + (tone ? ' ' + tone : '');
+                const ico = btn.querySelector('.tx-b-ico');
+                if (ico) ico.innerHTML = txIcon(iconName, 16);
+            }
             btn.classList.toggle('on', on);
-            const lb = btn.querySelector('.lb'), vl = btn.querySelector('.vl');
+            const lb = btn.querySelector('.tx-b-label'), vl = btn.querySelector('.tx-tc-val');
             if (lb && lb.textContent !== label) lb.textContent = label;
-            if (vl && vl.textContent !== value) vl.textContent = value;
+            if (vl) {
+                if (vl.textContent !== value) vl.textContent = value;
+                vl.hidden = !value;
+                vl.classList.toggle('tx-ds-kbd', !!isKbd);
+            }
         };
         if (listBreakBtnRef) {
             if (breakState) {
                 const remaining = breakState.end - Date.now();
-                setBtn(listBreakBtnRef, true, 'إنهاء البريك', remaining > 0 ? fmtClock(remaining) : 'زيادة');
+                setBtn(listBreakBtnRef, 'tx-tc-break', true, 'stop', 'is-warn', 'إنهاء البريك', remaining > 0 ? fmtClock(remaining) : 'زيادة', false);
             } else {
-                setBtn(listBreakBtnRef, false, 'بدء بريك', 'Alt+B');
+                setBtn(listBreakBtnRef, 'tx-tc-break', false, 'coffee', '', 'بدء بريك', 'Alt+B', true);
             }
         }
         if (listShiftBtnRef) {
             if (shiftState) {
-                setBtn(listShiftBtnRef, true, 'إنهاء الشيفت', 'صافي ' + fmtDurAr(shiftNetMs(Date.now())));
+                setBtn(listShiftBtnRef, 'tx-tc-shift', true, 'flag', 'is-danger', 'إنهاء الشيفت', 'صافي ' + fmtDurAr(shiftNetMs(Date.now())), false);
             } else {
-                setBtn(listShiftBtnRef, false, 'بدء الشيفت', '');
+                setBtn(listShiftBtnRef, 'tx-tc-shift', false, 'clock', 'is-primary', 'بدء الشيفت', '', false);
             }
         }
     }
@@ -11647,14 +12476,11 @@
     function updateSoundToggleUI() {
         const btn = soundToggleBtnRef;
         if (!btn) return;
-        const icon = btn.querySelector('.tx-qt-icon');
-        const label = btn.querySelector('.tx-qt-label');
-        if (icon) icon.textContent = celebrationSoundEnabled ? '🔊' : '🔇';
-        if (label) label.textContent = 'صوت الاحتفال: ' + (celebrationSoundEnabled ? 'شغال' : 'متوقف');
-        btn.classList.toggle('tx-qt-on', celebrationSoundEnabled);
-        btn.title = celebrationSoundEnabled
+        const ico = btn.querySelector('.tx-qt-ico');
+        if (ico) ico.innerHTML = txIcon(celebrationSoundEnabled ? 'volume' : 'mute');
+        qtSetSwitchRow(btn, celebrationSoundEnabled, celebrationSoundEnabled
             ? 'صوت بيشتغل مع كل إنهاء/تسليم تاسك (والأقوى كل 4 تاسكات) - الضغط لإيقافه'
-            : 'صوت الاحتفال متوقف - الضغط لتشغيله';
+            : 'صوت الاحتفال متوقف - الضغط لتشغيله');
     }
     function toggleCelebrationSound() {
         celebrationSoundEnabled = !celebrationSoundEnabled;
@@ -11685,15 +12511,20 @@
     let levelToggleBtnRef = null;
 
     function updateLevelToggleUI() {
-        const btn = levelToggleBtnRef;
-        if (!btn) return;
+        const field = levelToggleBtnRef;
+        if (!field) return;
         const meta = CELEBRATION_LEVEL_META[celebrationLevel];
-        const icon = btn.querySelector('.tx-qt-icon');
-        const label = btn.querySelector('.tx-qt-label');
-        if (icon) icon.textContent = meta.icon;
-        if (label) label.textContent = 'مستوى الاحتفال: ' + meta.name;
-        btn.classList.add('tx-qt-on');
-        btn.title = meta.hint + ' - اضغط لتغيير المستوى (بسيط ← متوسط ← كبير). وESC بيقفل أي احتفال شغال فوراً';
+        qtSetSegmentActive(field, celebrationLevel, 'مستوى الاحتفال: ' + meta.name + ' - ' + meta.hint + '. وESC بيقفل أي احتفال شغال فوراً');
+        field.classList.add('tx-qt-on');
+    }
+    // (v29.30.0) اختيار مباشر من الـsegmented control بدل اللف على المستويات
+    function setCelebrationLevel(level) {
+        if (!CELEBRATION_LEVELS.includes(level) || level === celebrationLevel) return;
+        celebrationLevel = level;
+        txSafeSetItem(CELEBRATION_LEVEL_STORAGE_KEY, celebrationLevel);
+        const meta = CELEBRATION_LEVEL_META[celebrationLevel];
+        showToast('مستوى الاحتفال: ' + meta.name + ' ' + meta.icon + ' - ' + meta.hint, false, 2200);
+        updateLevelToggleUI();
     }
     function cycleCelebrationLevel() {
         const idx = CELEBRATION_LEVELS.indexOf(celebrationLevel);
@@ -12634,7 +13465,7 @@
         style.id = 'tx-goalprompt-style';
         style.textContent = `
             .tx-goalp-box { width: 360px; text-align: center; }
-            .tx-goalp-emoji { font-size: 30px; line-height: 1; margin-bottom: 6px; filter: drop-shadow(0 0 10px rgba(251,113,133,0.5)); }
+            .tx-goalp-emoji { font-size: 30px; line-height: 1; margin-bottom: 6px; filter: drop-shadow(0 0 10px rgba(var(--tx-accent),0.5)); }
             .tx-goalp-title { font-size: 16px; font-weight: 800; margin-bottom: 4px; }
             .tx-goalp-sub { font-size: 12px; color: #94a3b8; margin-bottom: 16px; }
             .tx-goalp-row { display: flex; align-items: center; justify-content: center; gap: 10px; direction: ltr; margin-bottom: 14px; }
@@ -12651,15 +13482,15 @@
                 transition: border-color .2s ease, box-shadow .2s ease; -moz-appearance: textfield;
             }
             .tx-goalp-input::-webkit-outer-spin-button, .tx-goalp-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-            .tx-goalp-input:focus { border-color: rgba(251,113,133,0.75); box-shadow: 0 0 0 3px rgba(251,113,133,0.2), 0 0 16px rgba(251,113,133,0.25); }
-            .tx-goalp-input.bad { border-color: rgba(248,113,113,0.95); animation: tx-goalp-shake .3s ease; }
+            .tx-goalp-input:focus { border-color: rgba(var(--tx-accent),0.75); box-shadow: 0 0 0 3px rgba(var(--tx-accent),0.2), 0 0 16px rgba(var(--tx-accent),0.25); }
+            .tx-goalp-input.bad { border-color: rgba(var(--tx-danger),0.95); animation: tx-goalp-shake .3s ease; }
             .tx-goalp-chips { display: flex; justify-content: center; gap: 8px; margin-bottom: 20px; }
             .tx-goalp-chip {
                 padding: 5px 14px; border-radius: 999px; cursor: pointer; font-size: 12px; font-weight: 700; color: #cbd5e1;
                 background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); transition: all .15s ease; font-family: inherit;
             }
             .tx-goalp-chip:hover { background: rgba(255,255,255,0.15); color: #fff; }
-            .tx-goalp-chip.active { background: rgba(251,113,133,0.22); border-color: rgba(251,113,133,0.6); color: #fff; }
+            .tx-goalp-chip.active { background: rgba(var(--tx-accent),0.22); border-color: rgba(var(--tx-accent),0.6); color: #fff; }
             .tx-goalp-box .tx-confirm-actions { justify-content: center; }
             @keyframes tx-goalp-shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
         `;
@@ -14005,7 +14836,7 @@
     function tcFindContinueButtons() {
         const out = [];
         const push = (el) => {
-            if (el.closest('.tx-tc-box, #tx-tc-fab, #tx-tc-pill')) return;
+            if (el.closest('.tx-tc-box, #tx-tc-dock, #tx-tc-fab, #tx-tc-pill')) return;
             const t = (el.textContent || '').trim();
             if (!/^(continue|annotate)$/i.test(t)) return; // Continue = تاسك To be submitted، Annotate = تاسك To be annotated (لسه ما اتفتحتش). Abandon مش داخل هنا
             const c = el.closest('button, a, [role="button"]') || el;
@@ -14167,7 +14998,7 @@
             tcTimeEl = null;
             const els = document.querySelectorAll('div, span, p');
             for (const el of els) {
-                if (el.closest('#tx-floating-menu, .tx-panel-overlay, #tx-tc-pill, #tx-tc-fab')) continue;
+                if (el.closest('#tx-floating-menu, .tx-panel-overlay, #tx-tc-pill, #tx-tc-dock, #tx-tc-fab')) continue;
                 if (el.childElementCount > 6) continue;
                 const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
                 if (t.length > 40 || t.length < 15) continue;
@@ -14284,7 +15115,7 @@
         const sel = '.el-message, .el-message-box, .ant-message, .ant-modal, .ivu-message, .ivu-modal, .toast, .message, [role=\"dialog\"], [role=\"alert\"]';
         const out = [];
         document.querySelectorAll(sel).forEach(e => {
-            if (e.closest('#tx-floating-menu, .tx-panel-overlay, #tx-tc-pill, #tx-tc-fab')) return;
+            if (e.closest('#tx-floating-menu, .tx-panel-overlay, #tx-tc-pill, #tx-tc-dock, #tx-tc-fab')) return;
             if (!tcVisible(e)) return;
             const t = (e.textContent || '').replace(/\s+/g, ' ').trim();
             if (t && t.length < 200) out.push(t);
@@ -15122,115 +15953,86 @@
         const style = document.createElement('style');
         style.id = 'tx-tc-style';
         style.textContent = `
-            #tx-tc-fab { position: fixed; bottom: 22px; left: 22px; z-index: 100000; border: 1px solid rgba(255,255,255,0.18);
-                background: linear-gradient(135deg, rgba(124,58,237,0.85), rgba(99,102,241,0.75)); color: #fff; font-weight: 700;
-                font-size: 13px; padding: 11px 18px; border-radius: 14px; cursor: pointer; font-family: 'Cairo','Segoe UI',Tahoma,sans-serif;
-                box-shadow: 0 10px 26px rgba(0,0,0,0.5), 0 0 22px rgba(124,58,237,0.35); direction: rtl; }
-            #tx-tc-fab { position: fixed; width: 232px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap;
-                padding: 11px 16px; font-size: 13px; font-weight: 700; color: #e5e7eb; border-radius: 14px; overflow: hidden;
-                background: rgba(24,24,30,0.94); border: 1px solid rgba(255,255,255,0.10);
-                box-shadow: 0 10px 28px rgba(0,0,0,0.45); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-                transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease; }
-            #tx-tc-fab::before { content: ''; position: absolute; top: 9px; bottom: 9px; right: 0; width: 3px; border-radius: 3px 0 0 3px;
-                background: linear-gradient(180deg, #a78bfa 0%, #a78bfa 33%, #38bdf8 66%, #34d399 100%); background-size: 100% 300%; background-position: 0 0;
-                opacity: 0; transform: scaleY(0.4); transition: opacity 0.18s ease, transform 0.18s ease, background-position 0.5s ease; }
-            #tx-tc-fab:hover { filter: none; transform: translateY(-2px); color: #fff; border-color: rgba(167,139,250,0.40);
-                background: linear-gradient(270deg, rgba(167,139,250,0.22), rgba(24,24,30,0.96) 70%);
-                box-shadow: 0 14px 30px rgba(0,0,0,0.55), 0 0 18px rgba(167,139,250,0.22); }
-            #tx-tc-fab:hover::before { opacity: 1; transform: scaleY(1); background-position: 0 100%; }
-            #tx-tc-fab:active { transform: translateY(0) scale(0.985); background: rgba(255,255,255,0.10); }
-            #tx-tc-shiftbar { position: fixed; bottom: 74px; left: 22px; z-index: 100000; width: 232px; direction: rtl; overflow: hidden;
-                background: rgba(24,24,30,0.94); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px;
-                box-shadow: 0 10px 28px rgba(0,0,0,0.45); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-                font-family: 'Cairo','Segoe UI',Tahoma,sans-serif; }
-            #tx-tc-shiftbar button { display: flex; align-items: center; gap: 9px; width: 100%; box-sizing: border-box; margin: 0; border: none; border-radius: 0;
-                background: transparent; color: #e5e7eb; font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 10px 14px; cursor: pointer;
-                text-align: right; transition: background 0.15s ease; }
-            #tx-tc-shiftbar button + button { border-top: 1px solid rgba(255,255,255,0.08); }
-            #tx-tc-shiftbar button { position: relative; transition: background 0.18s ease, padding 0.18s ease, color 0.18s ease; }
-            #tx-tc-shiftbar button::before { content: ''; position: absolute; top: 7px; bottom: 7px; right: 0; width: 3px; border-radius: 3px 0 0 3px;
-                background: #a78bfa; opacity: 0; transform: scaleY(0.4); transition: opacity 0.18s ease, transform 0.18s ease; }
-            #tx-tc-shiftbar .tx-tc-break::before { background: #fbbf24; }
-            #tx-tc-shiftbar button:hover { background: linear-gradient(270deg, rgba(167,139,250,0.20), rgba(167,139,250,0.05)); color: #fff; padding-right: 17px; }
-            #tx-tc-shiftbar .tx-tc-break:hover { background: linear-gradient(270deg, rgba(251,191,36,0.18), rgba(251,191,36,0.04)); }
-            #tx-tc-shiftbar button:hover::before { opacity: 1; transform: scaleY(1); }
-            #tx-tc-shiftbar button:hover .ic { transform: scale(1.35); }
-            #tx-tc-shiftbar button:hover .vl { color: #e2e8f0; }
-            #tx-tc-shiftbar button:active { background: rgba(255,255,255,0.12); }
-            #tx-tc-shiftbar .ic { transition: background 0.2s, box-shadow 0.2s, transform 0.18s ease; }
-            #tx-tc-shiftbar .ic { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #64748b; transition: background 0.2s, box-shadow 0.2s; }
-            #tx-tc-shiftbar .lb { flex: 1 1 auto; min-width: 0; white-space: nowrap; }
-            #tx-tc-shiftbar .vl { flex: 0 0 auto; white-space: nowrap; direction: ltr; font-size: 11.5px; font-weight: 700; color: #94a3b8; font-variant-numeric: tabular-nums; }
-            #tx-tc-shiftbar button.on .ic { background: #34d399; box-shadow: 0 0 8px rgba(52,211,153,0.7); }
-            #tx-tc-shiftbar button.on .vl { color: #6ee7b7; }
-            #tx-tc-shiftbar .tx-tc-break.on .ic { background: #fbbf24; box-shadow: 0 0 8px rgba(251,191,36,0.7); }
-            #tx-tc-shiftbar .tx-tc-break.on .vl { color: #fcd34d; }
+            /* (v29.33.0) دوك صفحة My Task (شيفت + بريك + مركز التاسكات): بقى على نظام التصميم الموحّد زي نوافذ الأداة -
+               نفس surface/حدود/ظل الـpopup، وأزرار tx-ds-btn بنفس الـtones وأيقونات الـSVG (بدل الإيموجي والنقطة). */
+            #tx-tc-dock { position: fixed; bottom: 22px; left: 22px; z-index: 100000; width: 232px; box-sizing: border-box; direction: rtl;
+                display: flex; flex-direction: column; gap: 6px; padding: 8px;
+                background: var(--tx-surface-0); border: 1px solid rgba(var(--tx-accent), 0.3); border-radius: var(--tx-radius-lg);
+                box-shadow: var(--tx-shadow-pop); backdrop-filter: blur(16px) saturate(160%); -webkit-backdrop-filter: blur(16px) saturate(160%);
+                font-family: var(--tx-font); color: var(--tx-text); }
+            #tx-tc-shiftbar { display: flex; flex-direction: column; gap: 6px; }
+            #tx-tc-dock .tx-ds-btn { flex: 0 0 auto; width: 100%; box-sizing: border-box; margin: 0; padding: 8px 10px; }
+            #tx-tc-dock .tx-ds-btn .tx-b-label { text-align: right; }
+            #tx-tc-dock .tx-tc-val { flex: 0 0 auto; white-space: nowrap; direction: ltr; font: 700 11px var(--tx-font); font-variant-numeric: tabular-nums; opacity: 0.92; }
+            #tx-tc-dock .tx-tc-val.tx-ds-kbd { opacity: 1; }
+            #tx-tc-dock .tx-tc-val[hidden] { display: none; }
+            #tx-tc-fab { font-weight: 800; }
             #tx-tc-pill { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 300000; display: flex; align-items: center; gap: 10px;
-                background: linear-gradient(160deg, rgba(20,20,26,0.92), rgba(10,10,14,0.96)); border: 1px solid rgba(167,139,250,0.5);
+                background: linear-gradient(160deg, rgba(20,20,26,0.92), rgba(10,10,14,0.96)); border: 1px solid rgba(var(--tx-accent),0.5);
                 border-radius: 22px; padding: 8px 16px; color: #fff; font-size: 12.5px; font-weight: 700; direction: rtl;
-                font-family: 'Cairo','Segoe UI',Tahoma,sans-serif; box-shadow: 0 10px 28px rgba(0,0,0,0.55), 0 0 22px rgba(124,58,237,0.3); }
-            #tx-tc-pill button { border: 1px solid rgba(255,255,255,0.16); background: rgba(239,68,68,0.3); color: #fff; border-radius: 10px;
+                font-family: 'Cairo','Segoe UI',Tahoma,sans-serif; box-shadow: 0 10px 28px rgba(0,0,0,0.55), 0 0 22px rgba(var(--tx-accent),0.3); }
+            #tx-tc-pill button { border: 1px solid rgba(255,255,255,0.16); background: rgba(var(--tx-danger),0.3); color: #fff; border-radius: 10px;
                 padding: 3px 10px; font-size: 11.5px; font-weight: 700; cursor: pointer; font-family: inherit; }
             .tx-tc-box { width: 900px !important; }
             .tx-tc-summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; color: #cbd5e1; font-size: 12px; }
             .tx-tc-chip { background: rgba(255,255,255,0.07); border-radius: 20px; padding: 3px 11px; font-weight: 700; }
             .tx-tc-card { background: rgba(255,255,255,0.04); border-right: 4px solid #64748b; border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; color: #e2e8f0; font-size: 12.5px; }
-            .tx-tc-card.easy { border-right-color: #22c55e; } .tx-tc-card.medium { border-right-color: #eab308; }
-            .tx-tc-card.hard { border-right-color: #ef4444; } .tx-tc-card.ready { border-right-color: #38bdf8; background: rgba(56,189,248,0.07); }
+            .tx-tc-card.easy { border-right-color: rgb(var(--tx-ok)); } .tx-tc-card.medium { border-right-color: rgb(var(--tx-warn)); }
+            .tx-tc-card.hard { border-right-color: rgb(var(--tx-danger)); } .tx-tc-card.ready { border-right-color: rgb(var(--tx-info)); background: rgba(var(--tx-info),0.07); }
             .tx-tc-card.last { opacity: 0.6; }
             .tx-tc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 800; font-size: 13.5px; }
             .tx-tc-badge { background: rgba(255,255,255,0.1); border-radius: 8px; padding: 1px 8px; font-size: 11px; font-weight: 700; color: #cbd5e1; }
-            .tx-tc-badge.warn { background: rgba(234,179,8,0.2); color: #fde047; } .tx-tc-badge.err { background: rgba(239,68,68,0.2); color: #fca5a5; }
-            .tx-tc-badge.new { background: rgba(250,204,21,0.2); color: #fde047; border: 1px solid rgba(250,204,21,0.5); font-weight: 800; letter-spacing: .3px; }
-            .tx-tc-badge.ok { background: rgba(56,189,248,0.2); color: #7dd3fc; }
+            .tx-tc-badge.warn { background: rgba(var(--tx-warn),0.2); color: #fde047; } .tx-tc-badge.err { background: rgba(var(--tx-danger),0.2); color: #fca5a5; }
+            .tx-tc-badge.new { background: rgba(var(--tx-warn),0.2); color: #fde047; border: 1px solid rgba(var(--tx-warn),0.5); font-weight: 800; letter-spacing: .3px; }
+            .tx-tc-badge.ok { background: rgba(var(--tx-info),0.2); color: #7dd3fc; }
             .tx-tc-metrics { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 14px; color: #cbd5e1; font-size: 12px; }
-            .tx-tc-readmore { margin-top: 6px; background: transparent; border: 1px solid rgba(96,165,250,0.6); color: #93c5fd; border-radius: 8px; padding: 2px 10px; font-size: 11.5px; cursor: pointer; font-family: inherit; }
-            .tx-tc-readmore:hover { background: rgba(96,165,250,0.15); }
-            .tx-tc-warnlines { margin-top: 6px; color: #facc15; font-size: 11.5px; line-height: 1.6; }
+            .tx-tc-readmore { margin-top: 6px; background: transparent; border: 1px solid rgba(var(--tx-info),0.6); color: #93c5fd; border-radius: 8px; padding: 2px 10px; font-size: 11.5px; cursor: pointer; font-family: inherit; }
+            .tx-tc-readmore:hover { background: rgba(var(--tx-info),0.15); }
+            .tx-tc-warnlines { margin-top: 6px; color: rgb(var(--tx-warn)); font-size: 11.5px; line-height: 1.6; }
             .tx-tc-pillars { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
             .tx-tc-pillar { display: flex; align-items: flex-start; gap: 8px; background: rgba(0,0,0,0.22); border-radius: 8px; padding: 6px 9px; line-height: 1.7; }
             .tx-tc-pillar .dot { flex: none; margin-top: 2px; }
             .tx-tc-pillar .ptitle { font-weight: 800; color: #f1f5f9; }
             .tx-tc-pillar .pverdict { font-weight: 800; margin: 0 6px; }
-            .tx-tc-pillar .pverdict.easy { color: #4ade80; } .tx-tc-pillar .pverdict.medium { color: #facc15; } .tx-tc-pillar .pverdict.hard { color: #f87171; }
+            .tx-tc-pillar .pverdict.easy { color: #4ade80; } .tx-tc-pillar .pverdict.medium { color: rgb(var(--tx-warn)); } .tx-tc-pillar .pverdict.hard { color: #f87171; }
             .tx-tc-pillar .ptext { display: block; color: #cbd5e1; font-size: 12px; }
-            .tx-tc-reasons { margin-top: 6px; color: #fbbf24; font-size: 11.5px; font-weight: 700; }
+            .tx-tc-reasons { margin-top: 6px; color: rgb(var(--tx-warn)); font-size: 11.5px; font-weight: 700; }
             .tx-tc-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
             .tx-tc-note { flex: 1; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; color: #fff; padding: 5px 9px;
                 font-size: 12px; font-family: inherit; direction: rtl; outline: none; }
-            .tx-tc-note:focus { border-color: rgba(167,139,250,0.7); }
+            .tx-tc-note:focus { border-color: rgba(var(--tx-accent),0.7); }
             .tx-tc-mini { border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.08); color: #fff; border-radius: 8px; padding: 4px 10px;
                 font-size: 11.5px; font-weight: 700; cursor: pointer; font-family: inherit; }
-            .tx-tc-mini:hover { background: rgba(124,58,237,0.4); } .tx-tc-mini.on { background: rgba(234,179,8,0.35); }
+            .tx-tc-mini:hover { background: rgba(var(--tx-accent),0.4); } .tx-tc-mini.on { background: rgba(var(--tx-warn),0.35); }
             .tx-tc-sec { display: flex; align-items: center; gap: 8px; margin: 14px 2px 8px; font-size: 12.5px; font-weight: 800; color: #e2e8f0; }
             .tx-tc-sec::after { content: ''; flex: 1; height: 1px; background: linear-gradient(to left, rgba(255,255,255,0.18), transparent); }
             .tx-tc-sec .cnt { background: rgba(255,255,255,0.1); border-radius: 10px; padding: 0 8px; font-size: 11px; color: #cbd5e1; }
             .tx-tc-list { display: flex; flex-direction: column; gap: 8px; }
             .tx-tc-list .tx-tc-card { margin-bottom: 0; transition: box-shadow .15s, transform .15s, opacity .15s; }
             .tx-tc-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.35); }
-            .tx-tc-card.dragging { opacity: 0.45; outline: 2px dashed rgba(167,139,250,0.9); outline-offset: 2px; transform: scale(0.99); }
+            .tx-tc-card.dragging { opacity: 0.45; outline: 2px dashed rgba(var(--tx-accent),0.9); outline-offset: 2px; transform: scale(0.99); }
             .tx-tc-head { cursor: grab; user-select: none; }
             .tx-tc-head:active { cursor: grabbing; }
             .tx-tc-grip { color: #64748b; font-size: 16px; line-height: 1; letter-spacing: -2px; padding: 0 2px; }
-            .tx-tc-head:hover .tx-tc-grip { color: #a78bfa; }
+            .tx-tc-head:hover .tx-tc-grip { color: rgb(var(--tx-accent)); }
             .tx-tc-num { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 13px;
-                background: linear-gradient(135deg, #7c3aed, #6366f1); color: #fff; font-size: 13px; font-weight: 800; box-shadow: 0 2px 8px rgba(124,58,237,0.45); }
-            .tx-tc-num.done { background: linear-gradient(135deg, #0ea5e9, #38bdf8); box-shadow: 0 2px 8px rgba(56,189,248,0.4); }
+                background: linear-gradient(135deg, rgb(var(--tx-accent)), rgb(var(--tx-accent))); color: #fff; font-size: 13px; font-weight: 800; box-shadow: 0 2px 8px rgba(var(--tx-accent),0.45); }
+            .tx-tc-num.done { background: linear-gradient(135deg, #0ea5e9, rgb(var(--tx-info))); box-shadow: 0 2px 8px rgba(var(--tx-info),0.4); }
             .tx-tc-card.ready { opacity: 0.85; }
             .tx-tc-groups { display: flex; flex-direction: column; gap: 10px; }
-            .tx-tc-group { border: 1px solid rgba(167,139,250,0.4); border-radius: 14px; padding: 10px 10px 2px; background: linear-gradient(160deg, rgba(124,58,237,0.12), rgba(15,15,22,0.45)); }
-            .tx-tc-group.easy { border-color: rgba(34,197,94,0.5); } .tx-tc-group.medium { border-color: rgba(234,179,8,0.5); } .tx-tc-group.hard { border-color: rgba(239,68,68,0.5); }
-            .tx-tc-vhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-weight: 800; font-size: 13px; color: #e9d5ff; }
-            .tx-tc-vid { direction: ltr; unicode-bidi: isolate; font-family: Consolas, 'Courier New', monospace; color: #c4b5fd; background: rgba(0,0,0,0.32); padding: 1px 8px; border-radius: 8px; font-size: 12px; }
+            .tx-tc-group { border: 1px solid rgba(var(--tx-accent),0.4); border-radius: 14px; padding: 10px 10px 2px; background: linear-gradient(160deg, rgba(var(--tx-accent),0.12), rgba(15,15,22,0.45)); }
+            .tx-tc-group.easy { border-color: rgba(var(--tx-ok),0.5); } .tx-tc-group.medium { border-color: rgba(var(--tx-warn),0.5); } .tx-tc-group.hard { border-color: rgba(var(--tx-danger),0.5); }
+            .tx-tc-vhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-weight: 800; font-size: 13px; color: #ccfbf1; }
+            .tx-tc-vid { direction: ltr; unicode-bidi: isolate; font-family: Consolas, 'Courier New', monospace; color: #99f6e4; background: rgba(0,0,0,0.32); padding: 1px 8px; border-radius: 8px; font-size: 12px; }
             .tx-tc-vspacer { flex: 1; }
             .tx-tc-vparts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
             .tx-tc-vchip { direction: ltr; unicode-bidi: isolate; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.07); color: #fff; border-radius: 10px; padding: 3px 10px; font-size: 11.5px; font-weight: 700; cursor: pointer; font-family: inherit; }
-            .tx-tc-vchip:hover { background: rgba(124,58,237,0.4); }
-            .tx-tc-vchip.easy { border-color: rgba(34,197,94,0.7); } .tx-tc-vchip.medium { border-color: rgba(234,179,8,0.7); } .tx-tc-vchip.hard { border-color: rgba(239,68,68,0.7); }
-            .tx-tc-vline { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: #c4b5fd; font-size: 12px; }
-            .tx-tc-vwarn { color: #facc15; font-weight: 700; direction: ltr; unicode-bidi: plaintext; }
+            .tx-tc-vchip:hover { background: rgba(var(--tx-accent),0.4); }
+            .tx-tc-vchip.easy { border-color: rgba(var(--tx-ok),0.7); } .tx-tc-vchip.medium { border-color: rgba(var(--tx-warn),0.7); } .tx-tc-vchip.hard { border-color: rgba(var(--tx-danger),0.7); }
+            .tx-tc-vline { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: #99f6e4; font-size: 12px; }
+            .tx-tc-vwarn { color: rgb(var(--tx-warn)); font-weight: 700; direction: ltr; unicode-bidi: plaintext; }
             .tx-tc-vfile { display: inline-flex; align-items: center; gap: 6px; }
-            .tx-tc-vline .rng { direction: ltr; unicode-bidi: isolate; font-weight: 800; color: #ddd6fe; }
+            .tx-tc-vline .rng { direction: ltr; unicode-bidi: isolate; font-weight: 800; color: #ccfbf1; }
             .tx-tc-group .tx-tc-head { cursor: default; } .tx-tc-group .tx-tc-grip { display: none; }
             .tx-tc-list.work + .tx-tc-list.work { margin-top: 0; }
             /* (v29.19.0) شريط الفلتر والبحث */
@@ -15239,31 +16041,31 @@
                 backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid rgba(255,255,255,0.06); }
             .tx-tc-fbtn { border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: #cbd5e1; border-radius: 20px;
                 padding: 4px 12px; font-size: 11.5px; font-weight: 700; cursor: pointer; font-family: inherit; transition: all .12s ease; }
-            .tx-tc-fbtn:hover { background: rgba(124,58,237,0.3); color: #fff; }
-            .tx-tc-fbtn.on { background: linear-gradient(135deg, rgba(124,58,237,0.65), rgba(99,102,241,0.5)); color: #fff; border-color: rgba(167,139,250,0.75); }
+            .tx-tc-fbtn:hover { background: rgba(var(--tx-accent),0.3); color: #fff; }
+            .tx-tc-fbtn.on { background: linear-gradient(135deg, rgba(var(--tx-accent),0.65), rgba(var(--tx-accent),0.5)); color: #fff; border-color: rgba(var(--tx-accent),0.75); }
             .tx-tc-search { margin-inline-start: auto; width: 150px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.14);
                 border-radius: 10px; color: #fff; padding: 4px 10px; font-size: 12px; font-family: inherit; direction: rtl; outline: none; }
-            .tx-tc-search:focus { border-color: rgba(167,139,250,0.75); }
-            .tx-tc-fchip { font-size: 11.5px; padding: 4px 12px; color: #ddd6fe; }
-            .tx-tc-fcount { width: 100%; font-size: 11px; color: #a5b4fc; font-weight: 700; }
+            .tx-tc-search:focus { border-color: rgba(var(--tx-accent),0.75); }
+            .tx-tc-fchip { font-size: 11.5px; padding: 4px 12px; color: #ccfbf1; }
+            .tx-tc-fcount { width: 100%; font-size: 11px; color: #99f6e4; font-weight: 700; }
             .tx-tc-nomatch { display: none; margin: 8px 0; padding: 22px 16px; text-align: center; color: #cbd5e1; font-size: 13px; font-weight: 700;
                 background: rgba(255,255,255,0.04); border: 1px dashed rgba(255,255,255,0.18); border-radius: 14px; }
             .tx-tc-filtering .tx-tc-grip { display: none; } .tx-tc-filtering .tx-tc-head { cursor: default; }
             /* (v29.20.0) أقسام قابلة للطي */
             .tx-tc-sec { cursor: pointer; user-select: none; }
             .tx-tc-sec:hover { color: #fff; }
-            .tx-tc-sec .chev { display: inline-block; width: 14px; color: #a78bfa; font-size: 12px; transition: transform .15s ease; }
+            .tx-tc-sec .chev { display: inline-block; width: 14px; color: rgb(var(--tx-accent)); font-size: 12px; transition: transform .15s ease; }
             .tx-tc-sec.collapsed .chev { transform: rotate(90deg); }
             .tx-tc-filtering .tx-tc-sec.collapsed .chev { transform: none; } /* أثناء الفلتر القسم بيتفتح مؤقتاً عشان النتايج تظهر */
             /* (v29.19.0) قايمة ⋯ في الهيدر */
             .tx-tc-menuwrap { position: relative; }
             .tx-panel-btn.tx-tc-morebtn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); font-size: 16px; line-height: 1; padding: 5px 12px; }
-            .tx-panel-btn.tx-tc-morebtn:hover { background: rgba(124,58,237,0.4); }
+            .tx-panel-btn.tx-tc-morebtn:hover { background: rgba(var(--tx-accent),0.4); }
             .tx-tc-menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; min-width: 250px; display: flex; flex-direction: column; gap: 2px;
                 padding: 6px; background: rgba(20,20,28,0.98); border: 1px solid rgba(255,255,255,0.16); border-radius: 12px; box-shadow: 0 14px 34px rgba(0,0,0,0.6); }
             .tx-tc-menuitem { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: right; border: none; background: transparent;
                 color: #fff; border-radius: 8px; padding: 7px 10px; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 700; }
-            .tx-tc-menuitem:hover { background: rgba(124,58,237,0.35); }
+            .tx-tc-menuitem:hover { background: rgba(var(--tx-accent),0.35); }
             .tx-tc-menuitem small { color: #94a3b8; font-size: 10.5px; font-weight: 600; }
             /* ==================== (v29.27.1) تحسينات التصميم ==================== */
             @keyframes txTcIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
@@ -15271,8 +16073,8 @@
             .tx-tc-box { width: min(900px, 94vw) !important; }
             /* 1) لون الصعوبة على الكارت كله: متغير --tc-c (RGB) بيتحكم في الحافة والتدرج والحلقة والشريط */
             .tx-tc-card { --tc-c: 100,116,139; padding: 12px 14px; font-size: 13px; line-height: 1.6; }
-            .tx-tc-card.easy { --tc-c: 34,197,94; } .tx-tc-card.medium { --tc-c: 234,179,8; }
-            .tx-tc-card.hard { --tc-c: 239,68,68; } .tx-tc-card.ready { --tc-c: 56,189,248; }
+            .tx-tc-card.easy { --tc-c: var(--tx-ok); } .tx-tc-card.medium { --tc-c: var(--tx-warn); }
+            .tx-tc-card.hard { --tc-c: var(--tx-danger); } .tx-tc-card.ready { --tc-c: var(--tx-info); }
             .tx-tc-card.easy, .tx-tc-card.medium, .tx-tc-card.hard { background: linear-gradient(270deg, rgba(var(--tc-c),0.11), rgba(255,255,255,0.035) 48%); }
             .tx-tc-card.easy .tx-tc-num, .tx-tc-card.medium .tx-tc-num, .tx-tc-card.hard .tx-tc-num {
                 box-shadow: 0 0 0 2px rgba(var(--tc-c),0.9), 0 2px 10px rgba(var(--tc-c),0.35); }
@@ -15291,49 +16093,49 @@
             .tx-tc-vline { margin-top: 9px; gap: 8px 10px; font-variant-numeric: tabular-nums; }
             .tx-tc-vfile { background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 3px 8px; gap: 7px; }
             .tx-tc-vline .tx-tc-mini { padding: 3px 10px; }
-            .tx-tc-readmore { margin-top: 8px; border-color: rgba(167,139,250,0.5); color: #c4b5fd; padding: 3px 12px; font-weight: 700; transition: all .15s ease; }
-            .tx-tc-readmore:hover { background: rgba(167,139,250,0.16); color: #fff; border-color: rgba(167,139,250,0.8); }
+            .tx-tc-readmore { margin-top: 8px; border-color: rgba(var(--tx-accent),0.5); color: #99f6e4; padding: 3px 12px; font-weight: 700; transition: all .15s ease; }
+            .tx-tc-readmore:hover { background: rgba(var(--tx-accent),0.16); color: #fff; border-color: rgba(var(--tx-accent),0.8); }
             .tx-tc-vline .tx-tc-readmore { margin: 0; margin-inline-start: auto; }
             .tx-tc-more { animation: txTcIn .18s ease; }
             /* 4 + 6) الزراير: نفس اللغة (انتقالات + hover + فوكس) وزرار فتح أساسي */
             .tx-tc-mini { padding: 5px 12px; border-radius: 9px; white-space: nowrap; transition: background .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease, color .15s ease; }
-            .tx-tc-mini:hover { transform: translateY(-1px); border-color: rgba(167,139,250,0.55); }
+            .tx-tc-mini:hover { transform: translateY(-1px); border-color: rgba(var(--tx-accent),0.55); }
             .tx-tc-mini:active { transform: translateY(0) scale(0.97); }
             .tx-tc-mini:focus-visible, .tx-tc-readmore:focus-visible, .tx-tc-fbtn:focus-visible, .tx-tc-menuitem:focus-visible {
-                outline: 2px solid rgba(167,139,250,0.9); outline-offset: 2px; }
+                outline: 2px solid rgba(var(--tx-accent),0.9); outline-offset: 2px; }
             .tx-tc-foot { margin-top: 11px; gap: 8px; }
             .tx-tc-foot .tx-tc-mini:not(.primary) { background: transparent; color: #cbd5e1; }
-            .tx-tc-foot .tx-tc-mini:not(.primary):hover { background: rgba(124,58,237,0.3); color: #fff; }
-            .tx-tc-mini.primary { background: linear-gradient(135deg, #7c3aed, #6366f1); border-color: rgba(167,139,250,0.6); color: #fff;
-                box-shadow: 0 2px 10px rgba(124,58,237,0.4); }
-            .tx-tc-mini.primary:hover { filter: brightness(1.12); box-shadow: 0 4px 14px rgba(124,58,237,0.55); }
+            .tx-tc-foot .tx-tc-mini:not(.primary):hover { background: rgba(var(--tx-accent),0.3); color: #fff; }
+            .tx-tc-mini.primary { background: linear-gradient(135deg, rgb(var(--tx-accent)), rgb(var(--tx-accent))); border-color: rgba(var(--tx-accent),0.6); color: #fff;
+                box-shadow: 0 2px 10px rgba(var(--tx-accent),0.4); }
+            .tx-tc-mini.primary:hover { filter: brightness(1.12); box-shadow: 0 4px 14px rgba(var(--tx-accent),0.55); }
             .tx-tc-note { padding: 6px 11px; border-radius: 9px; transition: border-color .15s ease, background .15s ease; }
             .tx-tc-note:focus { background: rgba(0,0,0,0.42); }
             /* 7) تفاصيل صغيرة: شريط الفلتر + الأقسام */
             .tx-tc-filter { background: rgba(18,18,24,0.88); backdrop-filter: blur(12px) saturate(1.2); -webkit-backdrop-filter: blur(12px) saturate(1.2);
                 box-shadow: 0 8px 14px -10px rgba(0,0,0,0.7); }
             .tx-tc-sec { margin-top: 16px; }
-            .tx-tc-sec:hover .chev { color: #c4b5fd; }
+            .tx-tc-sec:hover .chev { color: #99f6e4; }
             .tx-tc-anim { animation: txTcIn .22s ease; }
             /* ==================== (v29.27.2) سحب وترتيب بحركة حقيقية ==================== */
             .tx-tc-list { position: relative; }
             .tx-tc-head { cursor: grab; }
             .tx-tc-grip { padding: 4px 6px; touch-action: none; border-radius: 6px; transition: color .15s ease, background .15s ease; }
-            .tx-tc-head:hover .tx-tc-grip { background: rgba(167,139,250,0.14); }
+            .tx-tc-head:hover .tx-tc-grip { background: rgba(var(--tx-accent),0.14); }
             .tx-tc-list.tc-sorting { user-select: none; -webkit-user-select: none; }
             .tx-tc-list.tc-sorting .tx-tc-card:not(.tc-lifted) { transition: transform .22s cubic-bezier(.2,.8,.2,1), opacity .15s ease !important; }
             .tx-tc-list.tc-sorting .tx-tc-card:not(.tc-lifted):hover { box-shadow: none; }
             .tx-tc-card.tc-lifted { position: relative; z-index: 4; cursor: grabbing; transition: box-shadow .18s ease !important;
                 background: linear-gradient(270deg, rgba(var(--tc-c),0.16), rgba(255,255,255,0.05) 55%), #1a1a24 !important;
-                box-shadow: 0 20px 44px rgba(0,0,0,0.62), 0 0 0 1px rgba(167,139,250,0.6), 0 0 26px rgba(124,58,237,0.28) !important; }
+                box-shadow: 0 20px 44px rgba(0,0,0,0.62), 0 0 0 1px rgba(var(--tx-accent),0.6), 0 0 26px rgba(var(--tx-accent),0.28) !important; }
             .tx-tc-card.tc-lifted .tx-tc-head { cursor: grabbing; }
             .tx-tc-card.tc-lifted.tc-settling { transition: transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s ease !important; }
             .tx-tc-slot { position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none; box-sizing: border-box; border-radius: 12px;
-                border: 2px dashed rgba(167,139,250,0.65); background: rgba(124,58,237,0.09);
+                border: 2px dashed rgba(var(--tx-accent),0.65); background: rgba(var(--tx-accent),0.09);
                 transition: top .22s cubic-bezier(.2,.8,.2,1); animation: txTcIn .15s ease; }
             /* ==================== (v29.27.3) دفعة تحسينات تانية ==================== */
             @keyframes txTcBar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-            @keyframes txTcPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(250,204,21,0.0); } 50% { box-shadow: 0 0 0 4px rgba(250,204,21,0.18); } }
+            @keyframes txTcPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(var(--tx-warn),0.0); } 50% { box-shadow: 0 0 0 4px rgba(var(--tx-warn),0.18); } }
             /* رقم التاسك: أوضح ومتراص */
             .tx-tc-tid { font-variant-numeric: tabular-nums; letter-spacing: .4px; color: #f8fafc; }
             /* مستوى الصعوبة بالكلمة جنب الرقم - لونه من --tc-c بتاع الكارت */
@@ -15343,17 +16145,17 @@
             /* أيقونة التحذير بتنبّض نبضة هادية بدل ما تكون ثابتة */
             .tx-tc-badge.warn { animation: txTcPulse 2.6s ease-in-out infinite; }
             /* فلتر المستويات: لما يتفعّل ياخد لون مستواه */
-            .tx-tc-fbtn[data-k="easy"].on { background: linear-gradient(135deg, rgba(34,197,94,0.55), rgba(34,197,94,0.28)); border-color: rgba(34,197,94,0.85); }
-            .tx-tc-fbtn[data-k="medium"].on { background: linear-gradient(135deg, rgba(234,179,8,0.55), rgba(234,179,8,0.26)); border-color: rgba(234,179,8,0.85); }
-            .tx-tc-fbtn[data-k="hard"].on { background: linear-gradient(135deg, rgba(239,68,68,0.55), rgba(239,68,68,0.26)); border-color: rgba(239,68,68,0.85); }
-            .tx-tc-fbtn[data-k="warn"].on { background: linear-gradient(135deg, rgba(250,204,21,0.45), rgba(250,204,21,0.2)); border-color: rgba(250,204,21,0.8); color: #fff; }
+            .tx-tc-fbtn[data-k="easy"].on { background: linear-gradient(135deg, rgba(var(--tx-ok),0.55), rgba(var(--tx-ok),0.28)); border-color: rgba(var(--tx-ok),0.85); }
+            .tx-tc-fbtn[data-k="medium"].on { background: linear-gradient(135deg, rgba(var(--tx-warn),0.55), rgba(var(--tx-warn),0.26)); border-color: rgba(var(--tx-warn),0.85); }
+            .tx-tc-fbtn[data-k="hard"].on { background: linear-gradient(135deg, rgba(var(--tx-danger),0.55), rgba(var(--tx-danger),0.26)); border-color: rgba(var(--tx-danger),0.85); }
+            .tx-tc-fbtn[data-k="warn"].on { background: linear-gradient(135deg, rgba(var(--tx-warn),0.45), rgba(var(--tx-warn),0.2)); border-color: rgba(var(--tx-warn),0.8); color: #fff; }
             .tx-tc-fbtn { transition: background .15s ease, border-color .15s ease, color .15s ease, transform .15s ease; }
             .tx-tc-fbtn:active { transform: scale(0.96); }
             /* البحث: بيتوسّع لما تركّز عليه */
             .tx-tc-search { transition: width .22s cubic-bezier(.2,.8,.2,1), border-color .15s ease, background .15s ease, box-shadow .15s ease; }
-            .tx-tc-search:focus { width: 230px; background: rgba(0,0,0,0.42); box-shadow: 0 0 0 3px rgba(167,139,250,0.18); }
+            .tx-tc-search:focus { width: 230px; background: rgba(0,0,0,0.42); box-shadow: 0 0 0 3px rgba(var(--tx-accent),0.18); }
             .tx-tc-search::placeholder, .tx-tc-note::placeholder { color: #64748b; }
-            .tx-tc-note:focus { box-shadow: 0 0 0 3px rgba(167,139,250,0.16); }
+            .tx-tc-note:focus { box-shadow: 0 0 0 3px rgba(var(--tx-accent),0.16); }
             /* الأزرار الثانوية (فحص / للآخر) هادية لحد ما تقرّب من الكارت */
             .tx-tc-foot .tx-tc-mini:not(.primary) { opacity: 0.62; }
             .tx-tc-card:hover .tx-tc-foot .tx-tc-mini, .tx-tc-foot .tx-tc-mini:focus-visible { opacity: 1; }
@@ -15371,19 +16173,19 @@
             @keyframes txTcShimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
             @keyframes txTcUndoIn { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
             @keyframes txTcCountdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-            @keyframes txTcNow { 0%, 100% { box-shadow: 0 0 0 0 rgba(167,139,250,0); } 50% { box-shadow: 0 0 0 4px rgba(167,139,250,0.22); } }
+            @keyframes txTcNow { 0%, 100% { box-shadow: 0 0 0 0 rgba(var(--tx-accent),0); } 50% { box-shadow: 0 0 0 4px rgba(var(--tx-accent),0.22); } }
             /* حركة دخول متتالية (أول فتح بس - backwards عشان ما تمسكش transform بتاع السحب بعد ما تخلص) */
             .tx-tc-box.tc-enter .tx-tc-list > .tx-tc-card, .tx-tc-box.tc-enter .tx-tc-groups > * {
                 animation: txTcCardIn .42s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: calc(var(--i, 0) * 55ms); }
             /* إجمالي وقت القسم */
-            .tx-tc-sectime { margin-inline-start: 2px; padding: 0 9px; border-radius: 10px; font-size: 11px; font-weight: 700; color: #a5b4fc;
-                background: rgba(99,102,241,0.14); border: 1px solid rgba(99,102,241,0.25); font-variant-numeric: tabular-nums; }
+            .tx-tc-sectime { margin-inline-start: 2px; padding: 0 9px; border-radius: 10px; font-size: 11px; font-weight: 700; color: #99f6e4;
+                background: rgba(var(--tx-accent),0.14); border: 1px solid rgba(var(--tx-accent),0.25); font-variant-numeric: tabular-nums; }
             /* شريط توزيع الصعوبة */
             .tx-tc-dist { display: flex; flex: 0 0 100%; gap: 3px; height: 8px; margin: 0 0 4px; }
             .tx-tc-dseg { border: none; padding: 0; margin: 0; min-width: 8px; height: 100%; border-radius: 4px; cursor: pointer; opacity: .85;
                 transition: opacity .15s ease, transform .15s ease, box-shadow .15s ease; }
-            .tx-tc-dseg.easy { background: #22c55e; color: #22c55e; } .tx-tc-dseg.medium { background: #eab308; color: #eab308; }
-            .tx-tc-dseg.hard { background: #ef4444; color: #ef4444; } .tx-tc-dseg.rest { background: rgba(255,255,255,0.16); cursor: default; }
+            .tx-tc-dseg.easy { background: rgb(var(--tx-ok)); color: rgb(var(--tx-ok)); } .tx-tc-dseg.medium { background: rgb(var(--tx-warn)); color: rgb(var(--tx-warn)); }
+            .tx-tc-dseg.hard { background: rgb(var(--tx-danger)); color: rgb(var(--tx-danger)); } .tx-tc-dseg.rest { background: rgba(255,255,255,0.16); cursor: default; }
             .tx-tc-dist:hover .tx-tc-dseg:not(:hover) { opacity: .5; }
             .tx-tc-dseg:not(.rest):hover { opacity: 1; transform: scaleY(1.6); }
             .tx-tc-dist.has-on .tx-tc-dseg:not(.on):not(.rest) { opacity: .3; }
@@ -15392,19 +16194,19 @@
             .tx-tc-expand { border-style: dashed; margin-inline-start: 4px; }
             /* ↑ لفوق */
             .tx-tc-box { position: relative; }
-            .tx-tc-top { position: absolute; left: 22px; bottom: 20px; z-index: 12; border: 1px solid rgba(167,139,250,0.55); border-radius: 999px; padding: 6px 14px;
-                background: linear-gradient(135deg, rgba(124,58,237,0.92), rgba(99,102,241,0.85)); color: #fff; font: 700 12px/1 'Cairo','Segoe UI',Tahoma,sans-serif;
+            .tx-tc-top { position: absolute; left: 22px; bottom: 20px; z-index: 12; border: 1px solid rgba(var(--tx-accent),0.55); border-radius: 999px; padding: 6px 14px;
+                background: linear-gradient(135deg, rgba(var(--tx-accent),0.92), rgba(var(--tx-accent),0.85)); color: #fff; font: 700 12px/1 'Cairo','Segoe UI',Tahoma,sans-serif;
                 cursor: pointer; box-shadow: 0 8px 20px rgba(0,0,0,0.5); opacity: 0; transform: translateY(10px) scale(.92); pointer-events: none;
                 transition: opacity .2s ease, transform .2s cubic-bezier(.2,.8,.2,1), filter .15s ease; }
             .tx-tc-top.show { opacity: 1; transform: none; pointer-events: auto; }
             .tx-tc-top:hover { filter: brightness(1.15); }
             /* رقم التاسك قابل للنسخ + عمر الفحص */
             .tx-tc-tid { cursor: copy; border-bottom: 1px dotted transparent; transition: color .15s ease, border-color .15s ease; }
-            .tx-tc-tid:hover { color: #c4b5fd; border-bottom-color: rgba(196,181,253,0.7); }
+            .tx-tc-tid:hover { color: #99f6e4; border-bottom-color: rgba(var(--tx-accent),0.7); }
             .tx-tc-metrics > .tx-tc-age { color: #94a3b8; font-size: 11.5px; }
-            .tx-tc-metrics > .tx-tc-age.old { color: #fbbf24; }
+            .tx-tc-metrics > .tx-tc-age.old { color: rgb(var(--tx-warn)); }
             /* هيكل تحميل للتاسكات اللي في طابور الفحص */
-            .tx-tc-card.tc-skel { border-right-color: #a78bfa; --tc-c: 167,139,250; }
+            .tx-tc-card.tc-skel { border-right-color: rgb(var(--tx-accent)); --tc-c: var(--tx-accent); }
             .tx-tc-card.tc-skel.now { animation: txTcNow 1.6s ease-in-out infinite; }
             .tx-tc-skel-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
             .tx-tc-skel-row > i { display: block; height: 24px; border-radius: 999px; background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.05) 75%);
@@ -15413,27 +16215,27 @@
             /* شريط تقدّم الفحص جوه الـpill */
             #tx-tc-pill { overflow: hidden; }
             .tx-tc-pill-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,0.1); }
-            .tx-tc-pill-bar > b { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #a78bfa, #38bdf8, #a78bfa); background-size: 200% 100%;
+            .tx-tc-pill-bar > b { display: block; height: 100%; width: 0; background: linear-gradient(90deg, rgb(var(--tx-accent)), rgb(var(--tx-info)), rgb(var(--tx-accent))); background-size: 200% 100%;
                 animation: txTcShimmer 1.2s linear infinite; transition: width .5s ease; }
             /* toast التراجع */
             .tx-tc-undo { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); z-index: 400000; direction: rtl; display: flex; align-items: center; gap: 14px;
-                padding: 10px 14px 13px; background: rgba(24,24,32,0.96); border: 1px solid rgba(167,139,250,0.4); border-radius: 14px; color: #f1f5f9;
+                padding: 10px 14px 13px; background: rgba(24,24,32,0.96); border: 1px solid rgba(var(--tx-accent),0.4); border-radius: 14px; color: #f1f5f9;
                 font: 700 12.5px/1.4 'Cairo','Segoe UI',Tahoma,sans-serif; box-shadow: 0 14px 34px rgba(0,0,0,0.55); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
                 overflow: hidden; animation: txTcUndoIn .24s cubic-bezier(.2,.8,.2,1); }
             .tx-tc-undo.out { opacity: 0; transform: translate(-50%, 8px); transition: opacity .2s ease, transform .2s ease; }
-            .tx-tc-undo button { border: 1px solid rgba(167,139,250,0.6); background: linear-gradient(135deg, #7c3aed, #6366f1); color: #fff; border-radius: 9px; padding: 4px 12px;
+            .tx-tc-undo button { border: 1px solid rgba(var(--tx-accent),0.6); background: linear-gradient(135deg, rgb(var(--tx-accent)), rgb(var(--tx-accent))); color: #fff; border-radius: 9px; padding: 4px 12px;
                 font: inherit; font-size: 12px; cursor: pointer; transition: filter .15s ease, transform .15s ease; }
             .tx-tc-undo button:hover { filter: brightness(1.15); transform: translateY(-1px); }
-            .tx-tc-undo > i { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, #a78bfa, #6366f1); transform-origin: right center; animation: txTcCountdown 6s linear forwards; }
+            .tx-tc-undo > i { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, rgb(var(--tx-accent)), rgb(var(--tx-accent))); transform-origin: right center; animation: txTcCountdown 6s linear forwards; }
             /* ==================== (v29.28.0) علامة "إنت واقف فين" + وضع مضغوط ==================== */
-            @keyframes txTcFlash { 0%, 100% { box-shadow: 0 0 0 0 rgba(56,189,248,0); } 30% { box-shadow: 0 0 0 5px rgba(56,189,248,0.4); } }
+            @keyframes txTcFlash { 0%, 100% { box-shadow: 0 0 0 0 rgba(var(--tx-info),0); } 30% { box-shadow: 0 0 0 5px rgba(var(--tx-info),0.4); } }
             .tx-tc-badge.worked { cursor: pointer; background: rgba(148,163,184,0.16); color: #94a3b8; }
-            .tx-tc-badge.worked.here { background: rgba(56,189,248,0.2); color: #7dd3fc; border: 1px solid rgba(56,189,248,0.55); }
-            .tx-tc-card.tc-here { outline: 1.5px solid rgba(56,189,248,0.5); outline-offset: -1px; }
+            .tx-tc-badge.worked.here { background: rgba(var(--tx-info),0.2); color: #7dd3fc; border: 1px solid rgba(var(--tx-info),0.55); }
+            .tx-tc-card.tc-here { outline: 1.5px solid rgba(var(--tx-info),0.5); outline-offset: -1px; }
             .tx-tc-card.tc-worked { opacity: .88; }
             .tx-tc-card.tc-flash { animation: txTcFlash 1.1s ease 2; }
             .tx-tc-badge.note { display: none; }
-            .tx-tc-herebtn { border-color: rgba(56,189,248,0.5) !important; color: #7dd3fc !important; }
+            .tx-tc-herebtn { border-color: rgba(var(--tx-info),0.5) !important; color: #7dd3fc !important; }
             .tx-tc-box.tx-tc-compact .tx-tc-card { display: flex; align-items: center; flex-wrap: nowrap; gap: 12px; padding: 6px 12px; margin-bottom: 5px; border-radius: 10px; line-height: 1.3; }
             .tx-tc-box.tx-tc-compact .tx-tc-list { gap: 5px; }
             .tx-tc-box.tx-tc-compact .tx-tc-head { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; gap: 8px; font-size: 13px; margin: 0; }
@@ -15454,33 +16256,45 @@
     function tcEnsureFab() {
         if (document.getElementById('tx-tc-fab')) return;
         ensureTaskCenterStyles();
-        const b = document.createElement('button');
-        b.id = 'tx-tc-fab';
-        b.textContent = '🗂️ مركز التاسكات';
-        b.onclick = () => tcShowPanel();
-        document.body.appendChild(b);
+        const mkBtn = (cls, extra) => {
+            const x = document.createElement('button');
+            x.type = 'button';
+            x.className = 'tx-ds-btn ' + cls;
+            x.innerHTML = '<span class="tx-b-ico"></span><span class="tx-b-label"></span>' + (extra || '');
+            return x;
+        };
 
         // (v29.26.8) بدء الشيفت + البريك في صفحة My Task - فوق زرار مركز التاسكات. نفس منطق Quick Tools
         // (toggleShift / toggleBreak)، والحالة بتتشارك معاه ومع صفحة التاسك لأنها متخزنة في localStorage.
+        // (v29.33.0) الثلاثة جوه دوك واحد على نظام التصميم الموحّد (tx-ds-btn + أيقونات SVG).
         initBreakAndShift();
+        const dock = document.createElement('div');
+        dock.id = 'tx-tc-dock';
+
         const bar = document.createElement('div');
         bar.id = 'tx-tc-shiftbar';
-        const shiftBtn = document.createElement('button');
-        shiftBtn.className = 'tx-tc-shift';
-        shiftBtn.innerHTML = '<span class="ic"></span><span class="lb"></span><span class="vl"></span>';
+        const shiftBtn = mkBtn('tx-tc-shift', '<span class="tx-tc-val" hidden></span>');
         shiftBtn.onclick = () => toggleShift();
-        const breakBtn = document.createElement('button');
-        breakBtn.className = 'tx-tc-break';
-        breakBtn.innerHTML = '<span class="ic"></span><span class="lb"></span><span class="vl"></span>';
+        const breakBtn = mkBtn('tx-tc-break', '<span class="tx-tc-val" hidden></span>');
         breakBtn.onclick = () => toggleBreak();
         bar.appendChild(shiftBtn);
         bar.appendChild(breakBtn);
-        document.body.appendChild(bar);
+
+        const b = mkBtn('tx-tc-main is-info');
+        b.id = 'tx-tc-fab';
+        b.querySelector('.tx-b-ico').innerHTML = txIcon('layers', 16);
+        b.querySelector('.tx-b-label').textContent = 'مركز التاسكات';
+        b.onclick = () => tcShowPanel();
+
+        dock.appendChild(bar);
+        dock.appendChild(b);
+        document.body.appendChild(dock);
         listShiftBtnRef = shiftBtn;
         listBreakBtnRef = breakBtn;
         updateListBreakShiftButtons();
     }
     function tcRemoveFab() {
+        const dock = document.getElementById('tx-tc-dock'); if (dock) dock.remove();
         const el = document.getElementById('tx-tc-fab'); if (el) el.remove();
         const bar = document.getElementById('tx-tc-shiftbar'); if (bar) bar.remove();
         listShiftBtnRef = null; listBreakBtnRef = null;
